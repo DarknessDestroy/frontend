@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPatch, apiPostForm, apiPatchForm, clearApiSession } from './client';
+import { apiGet, apiPost, apiPatch, apiDelete, apiPostForm, apiPatchForm, clearApiSession } from './client';
 
 const DEFAULT_DEV_EMAIL = import.meta.env.VITE_API_EMAIL ?? 'operator@drones.local';
 const DEFAULT_DEV_PASSWORD = import.meta.env.VITE_API_PASSWORD ?? 'password123';
@@ -168,6 +168,14 @@ export async function updateZoneWithBoundary(zoneId, boundary) {
     zone: { boundary },
   });
   return extractData(response);
+}
+
+/** DELETE /api/v1/zones/:id — удалить зону. */
+export async function deleteZoneInBackend(zoneId) {
+  if (zoneId == null) {
+    throw new Error('Выберите зону для удаления');
+  }
+  await apiDelete(`/api/v1/zones/${zoneId}`);
 }
 
 export async function syncDroneStateToBackend(droneId, dronePatch) {

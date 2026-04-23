@@ -17,6 +17,7 @@ import {
   createZoneWithKml,
   createZoneWithBoundary,
   updateZoneWithBoundary,
+  deleteZoneInBackend,
   updateZoneWithKml,
   syncDroneStateToBackend,
   createMissionInBackend,
@@ -1603,26 +1604,19 @@ function App() {
     if (!Array.isArray(boundary) || boundary.length < 4) return;
     setEditingZoneId(activeZoneId);
     setDraftRectBoundary(boundary.map(([lng, lat]) => [lng, lat]));
-    setZoneKmlMessage('Режим редактирования зоны: перетаскивайте углы и сохраните изменения.');
-    setZoneKmlIsError(false);
   }, [activeZoneId, drawRectZoneMode, templateEditMode, placementMode, isRouteEditMode]);
 
   const saveDraftRectZone = useCallback(async () => {
     if (!draftRectBoundary?.length) return;
     setRectZoneBusy(true);
-    setZoneKmlMessage(null);
-    setZoneKmlIsError(false);
     try {
       if (editingZoneId != null) {
-        const updated = await updateZoneWithBoundary(editingZoneId, draftRectBoundary);
+        await updateZoneWithBoundary(editingZoneId, draftRectBoundary);
         const zones = await fetchZonesFromBackend();
         setBackendZones(zones);
         setActiveZoneId(editingZoneId);
-        setZoneFitNonce((n) => n + 1);
         setEditingZoneId(null);
         setDraftRectBoundary(null);
-        setZoneKmlMessage(`Зона «${updated?.name ?? editingZoneId}» обновлена.`);
-        setZoneKmlIsError(false);
         return;
       }
 
@@ -1637,12 +1631,9 @@ function App() {
         if (u != null) {
           backendContextRef.current = { userId: u, zoneId: newId };
         }
-        setZoneFitNonce((n) => n + 1);
       }
       setEditingZoneId(null);
       setDraftRectBoundary(null);
-      setZoneKmlMessage(`Зона «${created?.name ?? name}» сохранена.`);
-      setZoneKmlIsError(false);
     } catch (err) {
       setZoneKmlMessage(String(err?.message ?? err));
       setZoneKmlIsError(true);
@@ -1650,6 +1641,35 @@ function App() {
       setRectZoneBusy(false);
     }
   }, [draftRectBoundary, newRectZoneName, editingZoneId]);
+
+  const handleDeleteActiveZone = useCallback(async () => {
+    if (activeZoneId == null) return;
+    const targetZone = backendZones.find((z) => z.id === activeZoneId);
+    const title = targetZone?.name ? `«${targetZone.name}»` : `ID ${activeZoneId}`;
+    const confirmed = window.confirm(`Удалить зону ${title}? Это действие нельзя отменить.`);
+    if (!confirmed) return;
+
+    setRectZoneBusy(true);
+    try {
+      await deleteZoneInBackend(activeZoneId);
+      const zones = await fetchZonesFromBackend();
+      setBackendZones(zones);
+
+      const nextActiveZoneId = zones.length > 0 ? zones[0].id : null;
+      setActiveZoneId(nextActiveZoneId);
+      const userId = backendContextRef.current.userId ?? null;
+      backendContextRef.current = { userId, zoneId: nextActiveZoneId };
+
+      setEditingZoneId(null);
+      setDrawRectZoneMode(false);
+      setDraftRectBoundary(null);
+    } catch (err) {
+      setZoneKmlMessage(String(err?.message ?? err));
+      setZoneKmlIsError(true);
+    } finally {
+      setRectZoneBusy(false);
+    }
+  }, [activeZoneId, backendZones]);
 
   const pendingKmlActionRef = useRef('create');
 
@@ -1926,62 +1946,58 @@ function App() {
                     </button>
                   </div>
                 </div>
-                {drawRectZoneMode && !draftRectBoundary && (
-                  <p className="text-xs text-amber-200">
-                    Зажмите кнопку мыши на карте, потяните и отпустите, чтобы нарисовать прямоугольник.
-                  </p>
-                )}
-                {draftRectBoundary && (
-                  <div className="flex flex-col gap-2">
-                    <p className="text-xs text-amber-200">
-                      {editingZoneId != null
-                        ? 'Редактирование зоны: перетаскивайте вершины и нажмите «Сохранить изменения».'
-                        : 'Прямоугольник можно редактировать: перетаскивайте вершины на карте.'}
-                    </p>
-                    <div className="flex flex-col sm:flex-row flex-wrap gap-2 items-stretch sm:items-center">
-                    {editingZoneId == null && (
-                      <input
-                        type="text"
-                        value={newRectZoneName}
-                        onChange={(e) => setNewRectZoneName(e.target.value)}
-                        placeholder="Имя зоны"
-                        className="px-3 py-2 bg-gray-800 border border-amber-700/60 rounded-lg text-white text-sm min-h-[42px] w-full sm:w-52"
-                      />
-                    )}
-                    <button
-                      type="button"
-                      onClick={saveDraftRectZone}
-                      disabled={rectZoneBusy || zoneKmlBusy}
-                      className="px-3 py-2 min-h-[42px] bg-amber-700 hover:bg-amber-600 disabled:opacity-50 rounded-lg text-white text-sm font-medium"
-                    >
-                      {editingZoneId != null ? 'Сохранить изменения' : 'Сохранить зону'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={cancelDraftRectZone}
-                      disabled={rectZoneBusy}
-                      className="px-3 py-2 min-h-[42px] bg-gray-700 hover:bg-gray-600 disabled:opacity-50 rounded-lg text-white text-sm"
-                    >
-                      Сбросить превью
-                    </button>
-                    </div>
-                  </div>
-                )}
-                {(zoneKmlMessage || zoneKmlBusy || rectZoneBusy) && (
-                  <p
-                    className={`text-xs ${
-                      zoneKmlBusy || rectZoneBusy
-                        ? 'text-gray-300'
-                        : zoneKmlIsError
-                          ? 'text-red-300'
-                          : 'text-emerald-200'
-                    }`}
-                  >
-                    {rectZoneBusy ? 'Сохранение зоны…' : zoneKmlBusy ? 'Загрузка KML…' : zoneKmlMessage}
-                  </p>
-                )}
               </div>
               <div className="flex-1 relative min-h-0">
+                {(drawRectZoneMode || draftRectBoundary) && (
+                  <div className="absolute top-2 left-2 z-[130] w-[min(92vw,510px)] rounded-xl border border-amber-600/40 bg-gray-900/80 p-3 backdrop-blur-sm">
+                    {drawRectZoneMode && !draftRectBoundary && (
+                      <p className="text-xs text-amber-200">
+                        Зажмите кнопку мыши на карте, потяните и отпустите, чтобы нарисовать прямоугольник.
+                      </p>
+                    )}
+                    {draftRectBoundary && (
+                      <div className="flex flex-col gap-2">
+                        <div className="flex flex-col sm:flex-row flex-wrap gap-2 items-stretch sm:items-center">
+                          {editingZoneId == null && (
+                            <input
+                              type="text"
+                              value={newRectZoneName}
+                              onChange={(e) => setNewRectZoneName(e.target.value)}
+                              placeholder="Имя зоны"
+                              className="px-3 py-2 bg-gray-800 border border-amber-700/60 rounded-lg text-white text-sm min-h-[42px] w-full sm:w-52"
+                            />
+                          )}
+                          <button
+                            type="button"
+                            onClick={saveDraftRectZone}
+                            disabled={rectZoneBusy || zoneKmlBusy}
+                            className="px-3 py-2 min-h-[42px] bg-amber-700 hover:bg-amber-600 disabled:opacity-50 rounded-lg text-white text-sm font-medium"
+                          >
+                            {editingZoneId != null ? 'Сохранить изменения' : 'Сохранить зону'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={cancelDraftRectZone}
+                            disabled={rectZoneBusy}
+                            className="px-3 py-2 min-h-[42px] bg-gray-700 hover:bg-gray-600 disabled:opacity-50 rounded-lg text-white text-sm"
+                          >
+                            Отмена редактирования
+                          </button>
+                          {editingZoneId != null && (
+                            <button
+                              type="button"
+                              onClick={handleDeleteActiveZone}
+                              disabled={activeZoneId == null || rectZoneBusy || zoneKmlBusy}
+                              className="px-3 py-2 min-h-[42px] bg-red-900/80 hover:bg-red-800 border border-red-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-white text-sm"
+                            >
+                              Удалить зону
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div className="absolute top-2 right-2 z-[100] flex justify-end">
                   <div className="relative">
                     <WeatherWidget

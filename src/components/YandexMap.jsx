@@ -99,7 +99,7 @@ export function YandexMap({
   const draftRectGeometryChangeHandlerRef = useRef(null);
   const isSyncingDraftRectRef = useRef(false);
   const rectDrawStateRef = useRef({ active: false, start: null, last: null });
-  const lastZoneFitNonceRef = useRef(null);
+  const lastZoneFitNonceRef = useRef(zoneFitNonce);
   const [mapLoaded, setMapLoaded] = useState(false);
   const [error, setError] = useState(null);
   const lastMapCenterRef = useRef(mapCenter);
@@ -337,7 +337,6 @@ export function YandexMap({
 
     const ring = boundaryToYandexRing(zoneBoundary);
     if (!ring) {
-      lastZoneFitNonceRef.current = null;
       return;
     }
 
@@ -419,6 +418,11 @@ export function YandexMap({
           strokeOpacity: 0.95,
           strokeStyle: 'shortdash',
           interactivityModel: 'default#geoObject',
+          hasBalloon: false,
+          hasHint: false,
+          openEmptyBalloon: false,
+          openBalloonOnClick: false,
+          editorMenuManager: () => [],
         }
       );
       map.geoObjects.add(polygon);

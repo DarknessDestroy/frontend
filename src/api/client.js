@@ -162,7 +162,7 @@ export async function apiPatch(path, body) {
  * @returns {Promise<void>}
  */
 export async function apiDelete(path) {
-  const res = await apiRequest(path);
+  const res = await apiRequest(path, { method: 'DELETE' });
   if (!res.ok) {
     const detail = await parseApiError(res);
     if (res.status === 401 && shouldAttachAuth(path)) {
