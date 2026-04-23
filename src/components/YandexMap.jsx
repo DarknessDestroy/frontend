@@ -39,6 +39,36 @@ function rectCornersToBoundary(cornerA, cornerB) {
   ];
 }
 
+function scaleRingAroundCenter(ring, factor = 1.01) {
+  if (!Array.isArray(ring) || ring.length < 4) return ring;
+  const points = ring.slice(0, -1);
+  if (!points.length) return ring;
+
+  const sum = points.reduce(
+    (acc, [lat, lng]) => {
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return acc;
+      acc.lat += lat;
+      acc.lng += lng;
+      acc.count += 1;
+      return acc;
+    },
+    { lat: 0, lng: 0, count: 0 }
+  );
+  if (!sum.count) return ring;
+
+  const centerLat = sum.lat / sum.count;
+  const centerLng = sum.lng / sum.count;
+  const scaled = points.map(([lat, lng]) => {
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return [lat, lng];
+    return [
+      centerLat + (lat - centerLat) * factor,
+      centerLng + (lng - centerLng) * factor,
+    ];
+  });
+  scaled.push([...scaled[0]]);
+  return scaled;
+}
+
 function isPointInsideBoundary(boundary, point) {
   if (!Array.isArray(boundary) || boundary.length < 4 || !point) return false;
   const vertices = boundary.slice(0, -1);
@@ -81,6 +111,8 @@ export function YandexMap({
   routeEditMode = false,
   /** Полигон активной зоны (boundary из backend, [lng, lat]). */
   zoneBoundary = null,
+  /** Цвет активной зоны (hex), например #22c55e. */
+  zoneColor = '#22c55e',
   /** Увеличивайте после загрузки KML / смены зоны — карта подгонит вид под полигон. */
   zoneFitNonce = 0,
   /** Превью прямоугольника до сохранения зоны (тот же формат boundary). */
@@ -95,6 +127,8 @@ export function YandexMap({
   const editingPolylineRef = useRef(null);
   const previewPolylineRef = useRef(null);
   const zonePolygonRef = useRef(null);
+  const zoneBoundaryBaseRef = useRef(null);
+  const zoneHoveredRef = useRef(false);
   const draftRectPolygonRef = useRef(null);
   const draftRectGeometryChangeHandlerRef = useRef(null);
   const isSyncingDraftRectRef = useRef(false);
@@ -106,6 +140,10 @@ export function YandexMap({
   const lastMapZoomRef = useRef(mapZoom);
 
   const API_KEY = '2b39244b-bae4-482a-b3a8-d4b21860b4e8';
+
+  const zoneStrokeColor = /^#[0-9a-fA-F]{6}$/.test(zoneColor) ? zoneColor : '#22c55e';
+  const zoneFillColor = `${zoneStrokeColor}2e`;
+  const zoneHoverFillColor = `${zoneStrokeColor}47`;
 
   useEffect(() => {
     if (window.ymaps && window.yandexMapsLoaded) {
@@ -337,15 +375,19 @@ export function YandexMap({
 
     const ring = boundaryToYandexRing(zoneBoundary);
     if (!ring) {
+      zoneBoundaryBaseRef.current = null;
+      zoneHoveredRef.current = false;
       return;
     }
+    zoneBoundaryBaseRef.current = ring;
+    zoneHoveredRef.current = false;
 
     const polygon = new window.ymaps.Polygon(
       [ring],
       {},
       {
-        fillColor: 'rgba(34, 197, 94, 0.18)',
-        strokeColor: '#22c55e',
+        fillColor: zoneFillColor,
+        strokeColor: zoneStrokeColor,
         strokeWidth: 2,
         strokeOpacity: 0.95,
         // Иначе полигон «съедает» клики: нельзя разместить дрон и поставить точки маршрута.
@@ -371,6 +413,8 @@ export function YandexMap({
     }
 
     return () => {
+      zoneBoundaryBaseRef.current = null;
+      zoneHoveredRef.current = false;
       if (zonePolygonRef.current) {
         try {
           map.geoObjects.remove(zonePolygonRef.current);
@@ -380,7 +424,48 @@ export function YandexMap({
         zonePolygonRef.current = null;
       }
     };
-  }, [mapLoaded, zoneBoundary, zoneFitNonce]);
+  }, [mapLoaded, zoneBoundary, zoneFitNonce, zoneFillColor, zoneStrokeColor]);
+
+  useEffect(() => {
+    if (!mapLoaded || !mapInstanceRef.current || !zoneBoundary || drawRectZoneMode) return;
+    const map = mapInstanceRef.current;
+
+    const setHoverState = (hovered) => {
+      if (!zonePolygonRef.current || !zoneBoundaryBaseRef.current) return;
+      if (zoneHoveredRef.current === hovered) return;
+      zoneHoveredRef.current = hovered;
+      const baseRing = zoneBoundaryBaseRef.current;
+      try {
+        zonePolygonRef.current.geometry.setCoordinates([
+          hovered ? scaleRingAroundCenter(baseRing, 1.0125) : baseRing,
+        ]);
+        zonePolygonRef.current.options.set({
+          fillColor: hovered ? zoneHoverFillColor : zoneFillColor,
+          strokeColor: zoneStrokeColor,
+          strokeWidth: hovered ? 3 : 2,
+        });
+      } catch {
+        /* ignore */
+      }
+    };
+
+    const handleMouseMove = (e) => {
+      const coords = e.get('coords');
+      if (!Array.isArray(coords) || coords.length < 2) return;
+      const inside = isPointInsideBoundary(zoneBoundary, { lat: coords[0], lng: coords[1] });
+      setHoverState(inside);
+    };
+    const handleMouseOut = () => setHoverState(false);
+
+    map.events.add('mousemove', handleMouseMove);
+    map.events.add('mouseout', handleMouseOut);
+
+    return () => {
+      map.events.remove('mousemove', handleMouseMove);
+      map.events.remove('mouseout', handleMouseOut);
+      setHoverState(false);
+    };
+  }, [mapLoaded, zoneBoundary, drawRectZoneMode, zoneFillColor, zoneHoverFillColor, zoneStrokeColor]);
 
   useEffect(() => {
     if (!mapLoaded || !mapInstanceRef.current || !window.ymaps) return;
@@ -562,6 +647,42 @@ export function YandexMap({
         typeof onZoneClick === 'function' &&
         isPointInsideBoundary(zoneBoundary, clickPoint)
       ) {
+        const ring = boundaryToYandexRing(zoneBoundary);
+        if (ring && ring.length > 0) {
+          let minLat = Number.POSITIVE_INFINITY;
+          let maxLat = Number.NEGATIVE_INFINITY;
+          let minLng = Number.POSITIVE_INFINITY;
+          let maxLng = Number.NEGATIVE_INFINITY;
+          ring.forEach(([lat, lng]) => {
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+            minLat = Math.min(minLat, lat);
+            maxLat = Math.max(maxLat, lat);
+            minLng = Math.min(minLng, lng);
+            maxLng = Math.max(maxLng, lng);
+          });
+          if (
+            Number.isFinite(minLat) &&
+            Number.isFinite(maxLat) &&
+            Number.isFinite(minLng) &&
+            Number.isFinite(maxLng)
+          ) {
+            const zoneCenter = [(minLat + maxLat) / 2, (minLng + maxLng) / 2];
+            try {
+              map.panTo(zoneCenter, {
+                delay: 0,
+                duration: 350,
+                flying: true,
+                timingFunction: 'ease-in-out',
+              });
+            } catch {
+              try {
+                map.setCenter(zoneCenter);
+              } catch {
+                /* ignore */
+              }
+            }
+          }
+        }
         onZoneClick(zoneBoundary);
         return;
       }

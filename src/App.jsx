@@ -46,6 +46,7 @@ const EXIT_PANELS_MS = VIEW_TRANSITION_MS;
 /** Минимальная дистанция (м): если дрон ближе к первой точке — перелёт до неё не добавляется */
 const FIRST_WAYPOINT_TRANSIT_THRESHOLD_M = 10;
 const TELEMETRY_SEND_EVERY_MS = 1000;
+const ZONE_COLORS_STORAGE_KEY = 'zone_colors_v1';
 
 // Видео-логирование (для multipart upload после завершения миссии).
 // ВАЖНО: backend допускает только content_type ровно 'video/webm' или 'video/mp4'.
@@ -272,6 +273,17 @@ function App() {
   const [backendZones, setBackendZones] = useState([]);
   const [activeZoneId, setActiveZoneId] = useState(null);
   const activeZoneIdRef = useRef(null);
+  const [zoneColorsById, setZoneColorsById] = useState(() => {
+    try {
+      const raw = localStorage.getItem(ZONE_COLORS_STORAGE_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return {};
+      return parsed;
+    } catch {
+      return {};
+    }
+  });
   const [zoneFitNonce, setZoneFitNonce] = useState(0);
   const [newZoneKmlName, setNewZoneKmlName] = useState('Полигон из KML');
   const [zoneKmlBusy, setZoneKmlBusy] = useState(false);
@@ -300,6 +312,36 @@ function App() {
     const z = backendZones.find((x) => x.id === activeZoneId);
     return Array.isArray(z?.boundary) ? z.boundary : null;
   }, [backendZones, activeZoneId]);
+  const activeZoneColor = useMemo(() => {
+    if (activeZoneId == null) return '#22c55e';
+    const saved = zoneColorsById[String(activeZoneId)];
+    return /^#[0-9a-fA-F]{6}$/.test(saved) ? saved : '#22c55e';
+  }, [activeZoneId, zoneColorsById]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(ZONE_COLORS_STORAGE_KEY, JSON.stringify(zoneColorsById));
+    } catch {
+      /* ignore */
+    }
+  }, [zoneColorsById]);
+
+  useEffect(() => {
+    if (!backendZones.length) return;
+    const validIds = new Set(backendZones.map((z) => String(z.id)));
+    setZoneColorsById((prev) => {
+      let changed = false;
+      const next = {};
+      Object.entries(prev).forEach(([id, color]) => {
+        if (validIds.has(id)) {
+          next[id] = color;
+        } else {
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [backendZones]);
 
   const dronesRef = useRef(drones);
   useEffect(() => {
@@ -1683,6 +1725,12 @@ function App() {
     }
   }, []);
 
+  const handleActiveZoneColorChange = useCallback((e) => {
+    const nextColor = e.target.value;
+    if (activeZoneId == null || !/^#[0-9a-fA-F]{6}$/.test(nextColor)) return;
+    setZoneColorsById((prev) => ({ ...prev, [String(activeZoneId)]: nextColor }));
+  }, [activeZoneId]);
+
   const openKmlPicker = useCallback((action) => {
     pendingKmlActionRef.current = action;
     zoneKmlInputRef.current?.click();
@@ -1825,6 +1873,7 @@ function App() {
                   editingPath={templateDraftPath}
                   forceResize={false}
                   zoneBoundary={activeZoneBoundary}
+                  zoneColor={activeZoneColor}
                   zoneFitNonce={zoneFitNonce}
                   draftRectBoundary={draftRectBoundary}
                   drawRectZoneMode={drawRectZoneMode}
@@ -1948,7 +1997,21 @@ function App() {
               </div>
               <div className="flex-1 relative min-h-0">
                 {(drawRectZoneMode || draftRectBoundary) && (
-                  <div className="absolute top-2 left-2 z-[130] w-[min(92vw,560px)] rounded-xl border border-amber-600/40 bg-gray-900/80 p-3 backdrop-blur-sm">
+                  <div className="absolute top-2 left-2 z-[130] w-[min(82vw,340px)] rounded-xl border border-amber-600/40 bg-gray-900/80 p-2 backdrop-blur-sm">
+                    {activeZoneId != null && (
+                      <label className="mb-2 relative w-full px-3 py-2 min-h-[42px] bg-gray-800 border border-amber-700/60 rounded-lg text-white text-sm flex items-center justify-end">
+                        <span className="pointer-events-none absolute inset-0 flex items-center justify-center whitespace-nowrap">
+                          Цвет зоны
+                        </span>
+                        <input
+                          type="color"
+                          value={activeZoneColor}
+                          onChange={handleActiveZoneColorChange}
+                          className="h-7 w-10 p-0 border border-amber-700/70 rounded cursor-pointer bg-transparent"
+                          title="Выбрать цвет активной зоны"
+                        />
+                      </label>
+                    )}
                     {drawRectZoneMode && !draftRectBoundary && (
                       <p className="text-xs text-amber-200">
                         Зажмите кнопку мыши на карте, потяните и отпустите, чтобы нарисовать прямоугольник.
@@ -1956,21 +2019,21 @@ function App() {
                     )}
                     {draftRectBoundary && (
                       <div className="flex flex-col gap-2">
-                        <div className="flex flex-col sm:flex-row flex-wrap gap-2 items-stretch sm:items-center">
+                        <div className="flex flex-col gap-2 items-stretch">
                           {editingZoneId == null && (
                             <input
                               type="text"
                               value={newRectZoneName}
                               onChange={(e) => setNewRectZoneName(e.target.value)}
                               placeholder="Имя зоны"
-                              className="px-3 py-2 bg-gray-800 border border-amber-700/60 rounded-lg text-white text-sm min-h-[42px] w-full sm:w-52"
+                              className="px-3 py-2 bg-gray-800 border border-amber-700/60 rounded-lg text-white text-sm min-h-[42px] w-full"
                             />
                           )}
                           <button
                             type="button"
                             onClick={saveDraftRectZone}
                             disabled={rectZoneBusy || zoneKmlBusy}
-                            className="px-3 py-2 min-h-[42px] bg-amber-700 hover:bg-amber-600 disabled:opacity-50 rounded-lg text-white text-sm font-medium"
+                            className="w-full px-3 py-2 min-h-[42px] bg-transparent border border-amber-600 text-amber-200 hover:bg-amber-700/80 hover:text-white disabled:opacity-50 rounded-lg text-sm font-medium transition-colors"
                           >
                             {editingZoneId != null ? 'Сохранить изменения' : 'Сохранить зону'}
                           </button>
@@ -1978,7 +2041,7 @@ function App() {
                             type="button"
                             onClick={cancelDraftRectZone}
                             disabled={rectZoneBusy}
-                            className="px-3 py-2 min-h-[42px] bg-gray-700 hover:bg-gray-600 disabled:opacity-50 rounded-lg text-white text-sm"
+                            className="w-full px-3 py-2 min-h-[42px] bg-transparent border border-gray-500 text-gray-200 hover:bg-gray-700/80 hover:text-white disabled:opacity-50 rounded-lg text-sm transition-colors"
                           >
                             Отмена редактирования
                           </button>
@@ -1987,7 +2050,7 @@ function App() {
                               type="button"
                               onClick={handleDeleteActiveZone}
                               disabled={activeZoneId == null || rectZoneBusy || zoneKmlBusy}
-                              className="px-3 py-2 min-h-[42px] bg-red-900/80 hover:bg-red-800 border border-red-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-white text-sm"
+                              className="w-full px-3 py-2 min-h-[42px] bg-transparent border border-red-700 text-red-200 hover:bg-red-900/80 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm transition-colors"
                             >
                               Удалить зону
                             </button>
@@ -2007,7 +2070,7 @@ function App() {
                   </div>
                 </div>
                 <YandexMap
-                  drones={drones.filter(d => d.isVisible)}
+                  drones={drones}
                   mapCenter={mapCenter}
                   mapZoom={mapZoom}
                   onMapClick={handleMapClick}
@@ -2020,6 +2083,7 @@ function App() {
                   routeEditMode={isRouteEditMode}
                   previewPath={templateToApplyId ? (missionTemplates.find(t => t.id === templateToApplyId)?.path) ?? null : null}
                   zoneBoundary={activeZoneBoundary}
+                  zoneColor={activeZoneColor}
                   zoneFitNonce={zoneFitNonce}
                   draftRectBoundary={draftRectBoundary}
                   drawRectZoneMode={drawRectZoneMode}
