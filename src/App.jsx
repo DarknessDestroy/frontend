@@ -43,6 +43,7 @@ import {
 
 const VIEW_TRANSITION_MS = 300;
 const EXIT_PANELS_MS = VIEW_TRANSITION_MS;
+const DESKTOP_SWITCH_EASE = 'cubic-bezier(0.16, 1, 0.3, 1)';
 /** Минимальная дистанция (м): если дрон ближе к первой точке — перелёт до неё не добавляется */
 const FIRST_WAYPOINT_TRANSIT_THRESHOLD_M = 10;
 const TELEMETRY_SEND_EVERY_MS = 1000;
@@ -1858,6 +1859,7 @@ function App() {
   if (!authReady) {
     return <AuthScreen onLoggedIn={() => setAuthReady(true)} />;
   }
+  const workspaceVisible = hasStarted && !exitingToTemplates;
 
   return (
     <div className="flex flex-col h-full min-h-0 overflow-hidden bg-transparent text-white px-2 sm:px-3 py-2 sm:py-3">
@@ -1899,33 +1901,33 @@ function App() {
       )}
 
       <div className="flex flex-1 gap-2 lg:gap-3 min-h-0 overflow-hidden flex-col lg:flex-row">
-        {hasStarted && (
-          <div
-            className={`fixed left-0 top-0 bottom-0 z-50 w-[85%] max-w-sm transform transition-transform duration-300 ease-out lg:relative lg:translate-x-0 lg:w-72 lg:max-w-none lg:flex-shrink-0 ${
-              exitingToTemplates ? 'opacity-0 pointer-events-none -translate-x-full' : ''
-            } ${parkingOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
-            style={{
-              transitionDuration: exitingToTemplates ? `${EXIT_PANELS_MS}ms` : undefined,
-              paddingTop: 'env(safe-area-inset-top, 0px)',
+        <div
+          className={`fixed left-0 top-0 bottom-0 z-50 w-[85%] max-w-sm transform transition-transform duration-300 ease-out lg:relative lg:w-72 lg:max-w-none lg:flex-shrink-0 ${
+            workspaceVisible
+              ? `${parkingOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'} opacity-100`
+              : 'pointer-events-none -translate-x-full lg:-translate-x-full opacity-0'
+          }`}
+          style={{
+            transitionDuration: exitingToTemplates ? `${EXIT_PANELS_MS}ms` : undefined,
+            paddingTop: 'env(safe-area-inset-top, 0px)',
+          }}
+        >
+          <DroneParking
+            drones={drones}
+            onPlaceDrone={startDronePlacement}
+            onRemoveDrone={removeDroneFromMap}
+            onCreateDrone={createDroneFromParking}
+            onBackToTemplates={() => {
+              setExitingToTemplates(true);
+              setParkingOpen(false);
+              setTimeout(() => {
+                setHasStarted(false);
+                setExitingToTemplates(false);
+              }, EXIT_PANELS_MS);
             }}
-          >
-            <DroneParking
-              drones={drones}
-              onPlaceDrone={startDronePlacement}
-              onRemoveDrone={removeDroneFromMap}
-              onCreateDrone={createDroneFromParking}
-              onBackToTemplates={() => {
-                setExitingToTemplates(true);
-                setParkingOpen(false);
-                setTimeout(() => {
-                  setHasStarted(false);
-                  setExitingToTemplates(false);
-                }, EXIT_PANELS_MS);
-              }}
-              onClose={() => setParkingOpen(false)}
-            />
-          </div>
-        )}
+            onClose={() => setParkingOpen(false)}
+          />
+        </div>
         <main className="flex-1 bg-transparent p-2 sm:p-3 rounded flex flex-col min-w-0 min-h-0">
           {templateEditMode ? (
             <div className="flex-1 flex flex-col min-h-0 relative">
@@ -1998,10 +2000,13 @@ function App() {
           ) : (
             <div className="flex-1 relative min-h-0 overflow-hidden">
               <div
-                className={`absolute inset-0 flex items-center justify-center transition-all ease-in-out ${
-                  hasStarted ? 'opacity-0 pointer-events-none' : 'opacity-100'
+                className={`absolute inset-0 flex items-center justify-center transition-transform will-change-transform ${
+                  hasStarted ? 'pointer-events-none -translate-x-full' : 'translate-x-0'
                 }`}
-                style={{ transitionDuration: noTransitionTemplateSwitch ? '0ms' : `${VIEW_TRANSITION_MS}ms` }}
+                style={{
+                  transitionDuration: noTransitionTemplateSwitch ? '0ms' : `${VIEW_TRANSITION_MS}ms`,
+                  transitionTimingFunction: DESKTOP_SWITCH_EASE,
+                }}
               >
                 <ShabloneScreen
                   onStart={handleStart}
@@ -2012,10 +2017,15 @@ function App() {
                 />
               </div>
               <div
-                className={`absolute inset-0 flex flex-col min-h-0 transition-all ease-in-out ${
-                  hasStarted && !exitingToTemplates ? 'opacity-100 translate-x-0' : 'opacity-0 pointer-events-none translate-x-full'
+                className={`absolute inset-0 flex flex-col min-h-0 transition-transform will-change-transform ${
+                  hasStarted && !exitingToTemplates
+                    ? 'translate-x-0'
+                    : 'pointer-events-none translate-x-full'
                 }`}
-                style={{ transitionDuration: noTransitionTemplateSwitch ? '0ms' : `${VIEW_TRANSITION_MS}ms` }}
+                style={{
+                  transitionDuration: noTransitionTemplateSwitch ? '0ms' : `${VIEW_TRANSITION_MS}ms`,
+                  transitionTimingFunction: DESKTOP_SWITCH_EASE,
+                }}
               >
             <div className="w-full flex flex-col gap-2 flex-1 min-h-0">
               {placementMode && droneToPlace && (
@@ -2202,46 +2212,46 @@ function App() {
           )}
         </main>
 
-        {hasStarted && (
-          <div
-            className={`fixed right-0 top-0 bottom-0 z-50 w-[85%] max-w-sm transform transition-transform duration-300 ease-out lg:relative lg:translate-x-0 lg:w-80 lg:max-w-none lg:flex-shrink-0 ${
-              exitingToTemplates ? 'opacity-0 pointer-events-none translate-x-full' : ''
-            } ${sidebarOpen ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'}`}
-            style={{
-              transitionDuration: exitingToTemplates ? `${EXIT_PANELS_MS}ms` : undefined,
-              paddingTop: 'env(safe-area-inset-top, 0px)',
-            }}
-          >
-            <div className="flex h-full min-h-0 flex-col pt-[72px]">
-              <div className="min-h-0 flex-1">
-                <Sidebar
-                  dronesData={drones}
-                  selectedDroneId={selectedDroneForSidebar}
-                  onSelectDrone={setSelectedDroneForSidebar}
-                  missionLog={globalMissionLog}
-                  activeFlights={getActiveFlights()}
-                  onStartFlight={startDroneFlight}
-                  onPauseFlight={pauseDroneFlight}
-                  onResumeFlight={resumeDroneFlight}
-                  onStopFlight={stopDroneFlight}
-                  onStopAllFlights={stopAllFlights}
-                  onAddRoutePoint={addRoutePoint}
-                  onUndoLastPoint={undoLastPoint}
-                  onClearRoute={clearRoute}
-                  onClearLogs={() => setGlobalMissionLog([])}
-                  onDroneClick={handleDroneClick}
-                  isRouteEditMode={isRouteEditMode}
-                  onToggleRouteMode={() => setIsRouteEditMode(prev => !prev)}
-                  onCenterToFirstWaypoint={centerMapToFirstWaypoint}
-                  onFlyToFirstWaypoint={flyDroneToFirstWaypoint}
-                  flightAllowedByWeather={weatherFlightSafe}
-                  weatherFlightReasons={weatherFlightReasons}
-                  onClose={() => setSidebarOpen(false)}
-                />
-              </div>
+        <div
+          className={`fixed right-0 top-0 bottom-0 z-50 w-[85%] max-w-sm transform transition-transform duration-300 ease-out lg:relative lg:w-80 lg:max-w-none lg:flex-shrink-0 ${
+            workspaceVisible
+              ? `${sidebarOpen ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'} opacity-100`
+              : 'pointer-events-none translate-x-full lg:translate-x-full opacity-0'
+          }`}
+          style={{
+            transitionDuration: exitingToTemplates ? `${EXIT_PANELS_MS}ms` : undefined,
+            paddingTop: 'env(safe-area-inset-top, 0px)',
+          }}
+        >
+          <div className="flex h-full min-h-0 flex-col pt-[72px]">
+            <div className="min-h-0 flex-1">
+              <Sidebar
+                dronesData={drones}
+                selectedDroneId={selectedDroneForSidebar}
+                onSelectDrone={setSelectedDroneForSidebar}
+                missionLog={globalMissionLog}
+                activeFlights={getActiveFlights()}
+                onStartFlight={startDroneFlight}
+                onPauseFlight={pauseDroneFlight}
+                onResumeFlight={resumeDroneFlight}
+                onStopFlight={stopDroneFlight}
+                onStopAllFlights={stopAllFlights}
+                onAddRoutePoint={addRoutePoint}
+                onUndoLastPoint={undoLastPoint}
+                onClearRoute={clearRoute}
+                onClearLogs={() => setGlobalMissionLog([])}
+                onDroneClick={handleDroneClick}
+                isRouteEditMode={isRouteEditMode}
+                onToggleRouteMode={() => setIsRouteEditMode(prev => !prev)}
+                onCenterToFirstWaypoint={centerMapToFirstWaypoint}
+                onFlyToFirstWaypoint={flyDroneToFirstWaypoint}
+                flightAllowedByWeather={weatherFlightSafe}
+                weatherFlightReasons={weatherFlightReasons}
+                onClose={() => setSidebarOpen(false)}
+              />
             </div>
           </div>
-        )}
+        </div>
       </div>
 
       {selectedDroneForModal && (
