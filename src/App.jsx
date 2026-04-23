@@ -41,7 +41,7 @@ import {
   calculateBearing
 } from './utils/flightCalculator';
 
-const VIEW_TRANSITION_MS = 300;
+const VIEW_TRANSITION_MS = 900;
 const EXIT_PANELS_MS = VIEW_TRANSITION_MS;
 const DESKTOP_SWITCH_EASE = 'cubic-bezier(0.16, 1, 0.3, 1)';
 /** Минимальная дистанция (м): если дрон ближе к первой точке — перелёт до неё не добавляется */
@@ -1905,10 +1905,11 @@ function App() {
           className={`fixed left-0 top-0 bottom-0 z-50 w-[85%] max-w-sm transform transition-transform duration-300 ease-out lg:relative lg:w-72 lg:max-w-none lg:flex-shrink-0 ${
             workspaceVisible
               ? `${parkingOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'} opacity-100`
-              : 'pointer-events-none -translate-x-full lg:-translate-x-full opacity-0'
+              : 'pointer-events-none translate-x-[100vw] opacity-0'
           }`}
           style={{
-            transitionDuration: exitingToTemplates ? `${EXIT_PANELS_MS}ms` : undefined,
+            transitionDuration: `${VIEW_TRANSITION_MS}ms`,
+            transitionTimingFunction: DESKTOP_SWITCH_EASE,
             paddingTop: 'env(safe-area-inset-top, 0px)',
           }}
         >
@@ -1998,10 +1999,12 @@ function App() {
               </div>
             </div>
           ) : (
-            <div className="flex-1 relative min-h-0 overflow-hidden">
+            <div className="flex-1 relative min-h-0 overflow-visible">
               <div
                 className={`absolute inset-0 flex items-center justify-center transition-transform will-change-transform ${
-                  hasStarted ? 'pointer-events-none -translate-x-full' : 'translate-x-0'
+                  workspaceVisible
+                    ? 'pointer-events-none -translate-x-[100vw]'
+                    : 'translate-x-0'
                 }`}
                 style={{
                   transitionDuration: noTransitionTemplateSwitch ? '0ms' : `${VIEW_TRANSITION_MS}ms`,
@@ -2018,9 +2021,9 @@ function App() {
               </div>
               <div
                 className={`absolute inset-0 flex flex-col min-h-0 transition-transform will-change-transform ${
-                  hasStarted && !exitingToTemplates
+                  workspaceVisible
                     ? 'translate-x-0'
-                    : 'pointer-events-none translate-x-full'
+                    : 'pointer-events-none translate-x-[100vw]'
                 }`}
                 style={{
                   transitionDuration: noTransitionTemplateSwitch ? '0ms' : `${VIEW_TRANSITION_MS}ms`,
@@ -2058,19 +2061,6 @@ function App() {
                       setMapCenter={setMapCenter}
                       setMapZoom={setMapZoom}
                     />
-                  </div>
-                  <div className="flex flex-col sm:flex-row flex-wrap gap-2 lg:shrink-0">
-                    <button
-                      type="button"
-                      onClick={toggleDrawRectZoneMode}
-                      className={`px-3 py-2 min-h-[52px] rounded-lg text-white text-base whitespace-nowrap border ${
-                        drawRectZoneMode
-                          ? 'bg-amber-900 border-amber-500 ring-2 ring-amber-400/70'
-                          : 'bg-amber-950/90 border-amber-800 hover:bg-amber-900'
-                      }`}
-                    >
-                      {drawRectZoneMode ? 'Отменить рисование' : 'Прямоугольник'}
-                    </button>
                   </div>
                 </div>
               </div>
@@ -2138,12 +2128,25 @@ function App() {
                   </div>
                 )}
                 <div className="absolute top-2 right-2 z-[100] flex justify-end">
-                  <div className="relative">
+                  <div className="relative flex flex-col items-end gap-2">
                     <WeatherWidget
                       latitude={mapCenter[0]}
                       longitude={mapCenter[1]}
                       onFlightConditionsChange={handleWeatherFlightConditions}
                     />
+                    <button
+                      type="button"
+                      onClick={toggleDrawRectZoneMode}
+                      title={drawRectZoneMode ? 'Отменить создание зоны' : 'Создать зону'}
+                      aria-label={drawRectZoneMode ? 'Отменить создание зоны' : 'Создать зону'}
+                      className={`w-11 h-11 rounded-lg text-white text-xl leading-none flex items-center justify-center border ${
+                        drawRectZoneMode
+                          ? 'bg-amber-900 border-amber-500 ring-2 ring-amber-400/70'
+                          : 'bg-amber-950/90 border-amber-800 hover:bg-amber-900'
+                      }`}
+                    >
+                      {drawRectZoneMode ? '×' : '▭'}
+                    </button>
                   </div>
                 </div>
                 <YandexMap
@@ -2216,10 +2219,11 @@ function App() {
           className={`fixed right-0 top-0 bottom-0 z-50 w-[85%] max-w-sm transform transition-transform duration-300 ease-out lg:relative lg:w-80 lg:max-w-none lg:flex-shrink-0 ${
             workspaceVisible
               ? `${sidebarOpen ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'} opacity-100`
-              : 'pointer-events-none translate-x-full lg:translate-x-full opacity-0'
+              : 'pointer-events-none translate-x-[100vw] opacity-0'
           }`}
           style={{
-            transitionDuration: exitingToTemplates ? `${EXIT_PANELS_MS}ms` : undefined,
+            transitionDuration: `${VIEW_TRANSITION_MS}ms`,
+            transitionTimingFunction: DESKTOP_SWITCH_EASE,
             paddingTop: 'env(safe-area-inset-top, 0px)',
           }}
         >
