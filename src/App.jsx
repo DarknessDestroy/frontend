@@ -1999,7 +1999,7 @@ function App() {
                 {(drawRectZoneMode || draftRectBoundary) && (
                   <div className="absolute top-2 left-2 z-[130] w-[min(82vw,340px)] rounded-xl border border-amber-600/40 bg-gray-900/80 p-2 backdrop-blur-sm">
                     {activeZoneId != null && (
-                      <label className="mb-2 relative w-full px-3 py-2 min-h-[42px] bg-gray-800 border border-amber-700/60 rounded-lg text-white text-sm flex items-center justify-end">
+                      <label className="mb-2 relative w-full px-3 py-2 min-h-[42px] bg-gray-800 border border-gray-500/70 rounded-lg text-white text-sm flex items-center justify-end">
                         <span className="pointer-events-none absolute inset-0 flex items-center justify-center whitespace-nowrap">
                           Цвет зоны
                         </span>
@@ -2007,7 +2007,7 @@ function App() {
                           type="color"
                           value={activeZoneColor}
                           onChange={handleActiveZoneColorChange}
-                          className="h-7 w-10 p-0 border border-amber-700/70 rounded cursor-pointer bg-transparent"
+                          className="h-7 w-10 p-0 border-0 rounded cursor-pointer bg-transparent"
                           title="Выбрать цвет активной зоны"
                         />
                       </label>
@@ -2033,7 +2033,7 @@ function App() {
                             type="button"
                             onClick={saveDraftRectZone}
                             disabled={rectZoneBusy || zoneKmlBusy}
-                            className="w-full px-3 py-2 min-h-[42px] bg-transparent border border-amber-600 text-amber-200 hover:bg-amber-700/80 hover:text-white disabled:opacity-50 rounded-lg text-sm font-medium transition-colors"
+                            className="w-full px-3 py-2 min-h-[42px] bg-transparent border border-gray-500/70 text-gray-100 hover:bg-emerald-700/80 hover:text-white disabled:opacity-50 rounded-lg text-sm font-medium transition-colors"
                           >
                             {editingZoneId != null ? 'Сохранить изменения' : 'Сохранить зону'}
                           </button>
@@ -2041,7 +2041,7 @@ function App() {
                             type="button"
                             onClick={cancelDraftRectZone}
                             disabled={rectZoneBusy}
-                            className="w-full px-3 py-2 min-h-[42px] bg-transparent border border-gray-500 text-gray-200 hover:bg-gray-700/80 hover:text-white disabled:opacity-50 rounded-lg text-sm transition-colors"
+                            className="w-full px-3 py-2 min-h-[42px] bg-transparent border border-gray-500/70 text-gray-200 hover:bg-black/80 hover:text-white disabled:opacity-50 rounded-lg text-sm transition-colors"
                           >
                             Отмена редактирования
                           </button>
@@ -2050,7 +2050,7 @@ function App() {
                               type="button"
                               onClick={handleDeleteActiveZone}
                               disabled={activeZoneId == null || rectZoneBusy || zoneKmlBusy}
-                              className="w-full px-3 py-2 min-h-[42px] bg-transparent border border-red-700 text-red-200 hover:bg-red-900/80 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm transition-colors"
+                              className="w-full px-3 py-2 min-h-[42px] bg-transparent border border-gray-500/70 text-gray-100 hover:bg-red-900/80 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm transition-colors"
                             >
                               Удалить зону
                             </button>
