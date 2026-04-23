@@ -10,6 +10,8 @@ export function AuthScreen({ onLoggedIn }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [passwordConfirmation, setPasswordConfirmation] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showPasswordConfirmation, setShowPasswordConfirmation] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -17,6 +19,8 @@ export function AuthScreen({ onLoggedIn }) {
     setError('');
     setPassword('');
     setPasswordConfirmation('');
+    setShowPassword(false);
+    setShowPasswordConfirmation(false);
   };
 
   const handleLogin = async (e) => {
@@ -110,15 +114,25 @@ export function AuthScreen({ onLoggedIn }) {
               <label htmlFor="auth-password" className="block text-sm text-gray-400 mb-1">
                 Пароль
               </label>
-              <input
-                id="auth-password"
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg bg-gray-700 border border-gray-600 text-white placeholder-gray-500 focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                placeholder="password"
-              />
+              <div className="relative">
+                <input
+                  id="auth-password"
+                  type={showPassword ? 'text' : 'password'}
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full px-3 py-2 pr-12 rounded-lg bg-gray-700 border border-gray-600 text-white placeholder-gray-500 focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  placeholder="password"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  className="absolute inset-y-0 right-2 my-auto h-7 px-2 rounded-md text-xs text-gray-200 hover:bg-gray-600/70"
+                  aria-label={showPassword ? 'Скрыть пароль' : 'Показать пароль'}
+                >
+                  {showPassword ? 'Скрыть' : 'Показать'}
+                </button>
+              </div>
             </div>
             <button
               type="submit"
@@ -162,29 +176,49 @@ export function AuthScreen({ onLoggedIn }) {
               <label htmlFor="reg-password" className="block text-sm text-gray-400 mb-1">
                 Пароль
               </label>
-              <input
-                id="reg-password"
-                type="password"
-                autoComplete="new-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg bg-gray-700 border border-gray-600 text-white placeholder-gray-500 focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                placeholder="password"
-              />
+              <div className="relative">
+                <input
+                  id="reg-password"
+                  type={showPassword ? 'text' : 'password'}
+                  autoComplete="new-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full px-3 py-2 pr-12 rounded-lg bg-gray-700 border border-gray-600 text-white placeholder-gray-500 focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  placeholder="password"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  className="absolute inset-y-0 right-2 my-auto h-7 px-2 rounded-md text-xs text-gray-200 hover:bg-gray-600/70"
+                  aria-label={showPassword ? 'Скрыть пароль' : 'Показать пароль'}
+                >
+                  {showPassword ? 'Скрыть' : 'Показать'}
+                </button>
+              </div>
             </div>
             <div>
               <label htmlFor="reg-password2" className="block text-sm text-gray-400 mb-1">
                 Подтверждение пароля
               </label>
-              <input
-                id="reg-password2"
-                type="password"
-                autoComplete="new-password"
-                value={passwordConfirmation}
-                onChange={(e) => setPasswordConfirmation(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg bg-gray-700 border border-gray-600 text-white placeholder-gray-500 focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                placeholder="repeat password"
-              />
+              <div className="relative">
+                <input
+                  id="reg-password2"
+                  type={showPasswordConfirmation ? 'text' : 'password'}
+                  autoComplete="new-password"
+                  value={passwordConfirmation}
+                  onChange={(e) => setPasswordConfirmation(e.target.value)}
+                  className="w-full px-3 py-2 pr-12 rounded-lg bg-gray-700 border border-gray-600 text-white placeholder-gray-500 focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  placeholder="repeat password"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPasswordConfirmation((prev) => !prev)}
+                  className="absolute inset-y-0 right-2 my-auto h-7 px-2 rounded-md text-xs text-gray-200 hover:bg-gray-600/70"
+                  aria-label={showPasswordConfirmation ? 'Скрыть пароль' : 'Показать пароль'}
+                >
+                  {showPasswordConfirmation ? 'Скрыть' : 'Показать'}
+                </button>
+              </div>
             </div>
             <button
               type="submit"

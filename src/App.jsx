@@ -16,6 +16,7 @@ import {
   createDroneInBackend,
   createZoneWithKml,
   createZoneWithBoundary,
+  updateZoneWithBoundary,
   updateZoneWithKml,
   syncDroneStateToBackend,
   createMissionInBackend,
@@ -54,25 +55,22 @@ const VIDEO_BACKEND_CONTENT_TYPE = 'video/webm';
 const VIDEO_RECORDER_MIME_CANDIDATES = ['video/webm;codecs=vp8', 'video/webm'];
 const VIDEO_MULTIPART_CHUNK_SIZE_BYTES = 1024 * 1024; // >= 1MB (минимум в backend)
 
-/** Два угла на карте (lat/lng) → замкнутый boundary [[lng, lat], ...] для API. */
-function rectCornersToBoundary(cornerA, cornerB) {
-  const minLat = Math.min(cornerA.lat, cornerB.lat);
-  const maxLat = Math.max(cornerA.lat, cornerB.lat);
-  const minLng = Math.min(cornerA.lng, cornerB.lng);
-  const maxLng = Math.max(cornerA.lng, cornerB.lng);
-  return [
-    [minLng, minLat],
-    [maxLng, minLat],
-    [maxLng, maxLat],
-    [minLng, maxLat],
-    [minLng, minLat],
-  ];
-}
-
 function hasStoredApiToken() {
   if (typeof window === 'undefined') return false;
   const t = localStorage.getItem('api_token');
   return Boolean(t && t.trim().length > 0);
+}
+
+function getStoredApiUser() {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem('api_user');
+    if (!raw) return null;
+    const user = JSON.parse(raw);
+    return user && typeof user === 'object' ? user : null;
+  } catch {
+    return null;
+  }
 }
 
 function withRuntimeState(drone) {
@@ -260,6 +258,13 @@ function App() {
   const [drones, setDrones] = useState(() => createLocalDrones());
   const [backendSync, setBackendSync] = useState({ status: 'idle', message: '' });
   const [authReady, setAuthReady] = useState(hasStoredApiToken);
+  const authUser = useMemo(() => getStoredApiUser(), [authReady]);
+  const authUserLabel = useMemo(() => {
+    if (authUser?.name && String(authUser.name).trim()) return String(authUser.name).trim();
+    if (authUser?.email && String(authUser.email).trim()) return String(authUser.email).trim();
+    if (authUser?.id != null) return `ID ${authUser.id}`;
+    return 'пользователь';
+  }, [authUser]);
   const backendContextRef = useRef({ userId: null, zoneId: null });
   const backendMissionIdsRef = useRef(new Map());
 
@@ -274,8 +279,8 @@ function App() {
   const zoneKmlInputRef = useRef(null);
 
   const [drawRectZoneMode, setDrawRectZoneMode] = useState(false);
-  const [rectZoneFirstCorner, setRectZoneFirstCorner] = useState(null);
   const [draftRectBoundary, setDraftRectBoundary] = useState(null);
+  const [editingZoneId, setEditingZoneId] = useState(null);
   const [newRectZoneName, setNewRectZoneName] = useState('Зона (прямоугольник)');
   const [rectZoneBusy, setRectZoneBusy] = useState(false);
 
@@ -286,7 +291,7 @@ function App() {
   useEffect(() => {
     if (!templateEditMode) return;
     setDrawRectZoneMode(false);
-    setRectZoneFirstCorner(null);
+    setEditingZoneId(null);
     setDraftRectBoundary(null);
   }, [templateEditMode]);
 
@@ -621,30 +626,6 @@ function App() {
     }
     if (placementMode && droneToPlace) {
       placeDroneOnMap(latlng);
-      return;
-    }
-    if (drawRectZoneMode) {
-      if (draftRectBoundary) {
-        return;
-      }
-      if (!rectZoneFirstCorner) {
-        setRectZoneFirstCorner({ lat: latlng.lat, lng: latlng.lng });
-        return;
-      }
-      const boundary = rectCornersToBoundary(rectZoneFirstCorner, latlng);
-      const latSpan = Math.abs(
-        Math.max(rectZoneFirstCorner.lat, latlng.lat) - Math.min(rectZoneFirstCorner.lat, latlng.lat)
-      );
-      const lngSpan = Math.abs(
-        Math.max(rectZoneFirstCorner.lng, latlng.lng) - Math.min(rectZoneFirstCorner.lng, latlng.lng)
-      );
-      if (latSpan < 1e-7 || lngSpan < 1e-7) {
-        console.warn('Rect zone: second corner too close to first');
-        return;
-      }
-      setDraftRectBoundary(boundary);
-      setRectZoneFirstCorner(null);
-      setDrawRectZoneMode(false);
       return;
     }
     if (selectedDroneForSidebar !== null && isRouteEditMode) {
@@ -1581,7 +1562,6 @@ function App() {
     setZoneKmlMessage(null);
     setZoneKmlIsError(false);
     setDrawRectZoneMode(false);
-    setRectZoneFirstCorner(null);
     setDraftRectBoundary(null);
     setRectZoneBusy(false);
 
@@ -1596,19 +1576,36 @@ function App() {
     setIsRouteEditMode(false);
     if (drawRectZoneMode) {
       setDrawRectZoneMode(false);
-      setRectZoneFirstCorner(null);
       return;
     }
+    setEditingZoneId(null);
     setDraftRectBoundary(null);
-    setRectZoneFirstCorner(null);
     setDrawRectZoneMode(true);
   }, [drawRectZoneMode]);
 
   const cancelDraftRectZone = useCallback(() => {
+    setEditingZoneId(null);
     setDraftRectBoundary(null);
-    setRectZoneFirstCorner(null);
     setDrawRectZoneMode(false);
   }, []);
+
+  const handleDraftRectBoundaryChange = useCallback((nextBoundary) => {
+    setDraftRectBoundary(nextBoundary ?? null);
+  }, []);
+
+  const handleRectDrawComplete = useCallback(() => {
+    setDrawRectZoneMode(false);
+  }, []);
+
+  const handleZoneClickToEdit = useCallback((boundary) => {
+    if (activeZoneId == null) return;
+    if (drawRectZoneMode || templateEditMode || placementMode || isRouteEditMode) return;
+    if (!Array.isArray(boundary) || boundary.length < 4) return;
+    setEditingZoneId(activeZoneId);
+    setDraftRectBoundary(boundary.map(([lng, lat]) => [lng, lat]));
+    setZoneKmlMessage('Режим редактирования зоны: перетаскивайте углы и сохраните изменения.');
+    setZoneKmlIsError(false);
+  }, [activeZoneId, drawRectZoneMode, templateEditMode, placementMode, isRouteEditMode]);
 
   const saveDraftRectZone = useCallback(async () => {
     if (!draftRectBoundary?.length) return;
@@ -1616,6 +1613,19 @@ function App() {
     setZoneKmlMessage(null);
     setZoneKmlIsError(false);
     try {
+      if (editingZoneId != null) {
+        const updated = await updateZoneWithBoundary(editingZoneId, draftRectBoundary);
+        const zones = await fetchZonesFromBackend();
+        setBackendZones(zones);
+        setActiveZoneId(editingZoneId);
+        setZoneFitNonce((n) => n + 1);
+        setEditingZoneId(null);
+        setDraftRectBoundary(null);
+        setZoneKmlMessage(`Зона «${updated?.name ?? editingZoneId}» обновлена.`);
+        setZoneKmlIsError(false);
+        return;
+      }
+
       const name = newRectZoneName.trim() || 'Зона (прямоугольник)';
       const created = await createZoneWithBoundary({ name, boundary: draftRectBoundary });
       const zones = await fetchZonesFromBackend();
@@ -1629,6 +1639,7 @@ function App() {
         }
         setZoneFitNonce((n) => n + 1);
       }
+      setEditingZoneId(null);
       setDraftRectBoundary(null);
       setZoneKmlMessage(`Зона «${created?.name ?? name}» сохранена.`);
       setZoneKmlIsError(false);
@@ -1638,7 +1649,7 @@ function App() {
     } finally {
       setRectZoneBusy(false);
     }
-  }, [draftRectBoundary, newRectZoneName]);
+  }, [draftRectBoundary, newRectZoneName, editingZoneId]);
 
   const pendingKmlActionRef = useRef('create');
 
@@ -1715,9 +1726,6 @@ function App() {
 
   return (
     <div className="flex flex-col h-full min-h-0 overflow-hidden bg-transparent text-white px-2 sm:px-3 py-2 sm:py-3">
-      <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between min-h-0">
-      </div>
-
       {/* Backdrop for mobile overlays */}
       {(sidebarOpen || parkingOpen) && (
         <button
@@ -1726,6 +1734,33 @@ function App() {
           className="fixed inset-0 bg-black/50 z-40 lg:hidden"
           onClick={() => { setSidebarOpen(false); setParkingOpen(false); }}
         />
+      )}
+      {authUserLabel && (
+        <div className="fixed top-2 right-2 sm:top-3 sm:right-3 z-[1200]">
+          <div className="w-[300px] rounded-2xl border border-[rgba(0,188,125,0.4)] bg-emerald-900/30 px-3 py-2 text-sm text-emerald-100 shadow-lg shadow-emerald-900/20 backdrop-blur-sm">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full border border-emerald-400/60 bg-emerald-950/70 text-2xl leading-none">
+                  👤
+                </div>
+                <div className="min-w-0 leading-tight">
+                  <p className="text-[11px] uppercase tracking-wide text-emerald-300/90">Статус аккаунта</p>
+                  <p className="truncate">
+                    Вы вошли: <strong>{authUserLabel}</strong>
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="inline-flex flex-shrink-0 items-center justify-center gap-2 rounded-xl border border-red-500/60 bg-red-900/30 px-3 py-2 text-sm font-medium text-red-100 transition-colors hover:bg-red-800/50 hover:text-white"
+              >
+                <span className="text-base leading-none">↩</span>
+                <span>Выход</span>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       <div className="flex flex-1 gap-2 lg:gap-3 min-h-0 overflow-hidden flex-col lg:flex-row">
@@ -1765,6 +1800,9 @@ function App() {
                   mapCenter={mapCenter}
                   mapZoom={mapZoom}
                   onMapClick={handleMapClick}
+                  onZoneClick={handleZoneClickToEdit}
+                  onDraftRectBoundaryChange={handleDraftRectBoundaryChange}
+                  onRectDrawComplete={handleRectDrawComplete}
                   editingPath={templateDraftPath}
                   forceResize={false}
                   zoneBoundary={activeZoneBoundary}
@@ -1834,7 +1872,6 @@ function App() {
                   onStartCreateTemplate={startCreateTemplate}
                   onEditTemplateRoute={startEditTemplateRoute}
                   onDeleteTemplate={deleteMissionTemplate}
-                  onLogout={handleLogout}
                 />
               </div>
               <div
@@ -1868,7 +1905,7 @@ function App() {
                 </div>
               )}
               <div className="flex flex-col gap-2 mb-2 relative z-[1100]">
-                <div className="flex flex-col lg:flex-row gap-2 lg:items-end">
+                <div className="flex flex-col lg:flex-row gap-2 lg:items-start">
                   <div className="flex-1 min-w-0">
                     <SearchBox
                       setMapCenter={setMapCenter}
@@ -1879,7 +1916,7 @@ function App() {
                     <button
                       type="button"
                       onClick={toggleDrawRectZoneMode}
-                      className={`px-3 py-2 min-h-[42px] rounded-lg text-white text-sm whitespace-nowrap border ${
+                      className={`px-3 py-2 min-h-[52px] rounded-lg text-white text-base whitespace-nowrap border ${
                         drawRectZoneMode
                           ? 'bg-amber-900 border-amber-500 ring-2 ring-amber-400/70'
                           : 'bg-amber-950/90 border-amber-800 hover:bg-amber-900'
@@ -1891,27 +1928,33 @@ function App() {
                 </div>
                 {drawRectZoneMode && !draftRectBoundary && (
                   <p className="text-xs text-amber-200">
-                    {rectZoneFirstCorner
-                      ? 'Кликните на карте второй угол прямоугольника (диагональ от первого).'
-                      : 'Кликните на карте первый угол зоны, затем второй — получится ось-ориентированный прямоугольник.'}
+                    Зажмите кнопку мыши на карте, потяните и отпустите, чтобы нарисовать прямоугольник.
                   </p>
                 )}
                 {draftRectBoundary && (
-                  <div className="flex flex-col sm:flex-row flex-wrap gap-2 items-stretch sm:items-center">
-                    <input
-                      type="text"
-                      value={newRectZoneName}
-                      onChange={(e) => setNewRectZoneName(e.target.value)}
-                      placeholder="Имя зоны"
-                      className="px-3 py-2 bg-gray-800 border border-amber-700/60 rounded-lg text-white text-sm min-h-[42px] w-full sm:w-52"
-                    />
+                  <div className="flex flex-col gap-2">
+                    <p className="text-xs text-amber-200">
+                      {editingZoneId != null
+                        ? 'Редактирование зоны: перетаскивайте вершины и нажмите «Сохранить изменения».'
+                        : 'Прямоугольник можно редактировать: перетаскивайте вершины на карте.'}
+                    </p>
+                    <div className="flex flex-col sm:flex-row flex-wrap gap-2 items-stretch sm:items-center">
+                    {editingZoneId == null && (
+                      <input
+                        type="text"
+                        value={newRectZoneName}
+                        onChange={(e) => setNewRectZoneName(e.target.value)}
+                        placeholder="Имя зоны"
+                        className="px-3 py-2 bg-gray-800 border border-amber-700/60 rounded-lg text-white text-sm min-h-[42px] w-full sm:w-52"
+                      />
+                    )}
                     <button
                       type="button"
                       onClick={saveDraftRectZone}
                       disabled={rectZoneBusy || zoneKmlBusy}
                       className="px-3 py-2 min-h-[42px] bg-amber-700 hover:bg-amber-600 disabled:opacity-50 rounded-lg text-white text-sm font-medium"
                     >
-                      Сохранить зону
+                      {editingZoneId != null ? 'Сохранить изменения' : 'Сохранить зону'}
                     </button>
                     <button
                       type="button"
@@ -1921,6 +1964,7 @@ function App() {
                     >
                       Сбросить превью
                     </button>
+                    </div>
                   </div>
                 )}
                 {(zoneKmlMessage || zoneKmlBusy || rectZoneBusy) && (
@@ -1952,6 +1996,9 @@ function App() {
                   mapCenter={mapCenter}
                   mapZoom={mapZoom}
                   onMapClick={handleMapClick}
+                  onZoneClick={handleZoneClickToEdit}
+                  onDraftRectBoundaryChange={handleDraftRectBoundaryChange}
+                  onRectDrawComplete={handleRectDrawComplete}
                   onMapCenterChange={setMapCenter}
                   selectedDroneId={selectedDroneForSidebar}
                   forceResize={true}
@@ -2018,30 +2065,34 @@ function App() {
               paddingTop: 'env(safe-area-inset-top, 0px)',
             }}
           >
-            <Sidebar
-              dronesData={drones}
-              selectedDroneId={selectedDroneForSidebar}
-              onSelectDrone={setSelectedDroneForSidebar}
-              missionLog={globalMissionLog}
-              activeFlights={getActiveFlights()}
-              onStartFlight={startDroneFlight}
-              onPauseFlight={pauseDroneFlight}
-              onResumeFlight={resumeDroneFlight}
-              onStopFlight={stopDroneFlight}
-              onStopAllFlights={stopAllFlights}
-              onAddRoutePoint={addRoutePoint}
-              onUndoLastPoint={undoLastPoint}
-              onClearRoute={clearRoute}
-              onClearLogs={() => setGlobalMissionLog([])}
-              onDroneClick={handleDroneClick}
-              isRouteEditMode={isRouteEditMode}
-              onToggleRouteMode={() => setIsRouteEditMode(prev => !prev)}
-              onCenterToFirstWaypoint={centerMapToFirstWaypoint}
-              onFlyToFirstWaypoint={flyDroneToFirstWaypoint}
-              flightAllowedByWeather={weatherFlightSafe}
-              weatherFlightReasons={weatherFlightReasons}
-              onClose={() => setSidebarOpen(false)}
-            />
+            <div className="flex h-full min-h-0 flex-col pt-[72px]">
+              <div className="min-h-0 flex-1">
+                <Sidebar
+                  dronesData={drones}
+                  selectedDroneId={selectedDroneForSidebar}
+                  onSelectDrone={setSelectedDroneForSidebar}
+                  missionLog={globalMissionLog}
+                  activeFlights={getActiveFlights()}
+                  onStartFlight={startDroneFlight}
+                  onPauseFlight={pauseDroneFlight}
+                  onResumeFlight={resumeDroneFlight}
+                  onStopFlight={stopDroneFlight}
+                  onStopAllFlights={stopAllFlights}
+                  onAddRoutePoint={addRoutePoint}
+                  onUndoLastPoint={undoLastPoint}
+                  onClearRoute={clearRoute}
+                  onClearLogs={() => setGlobalMissionLog([])}
+                  onDroneClick={handleDroneClick}
+                  isRouteEditMode={isRouteEditMode}
+                  onToggleRouteMode={() => setIsRouteEditMode(prev => !prev)}
+                  onCenterToFirstWaypoint={centerMapToFirstWaypoint}
+                  onFlyToFirstWaypoint={flyDroneToFirstWaypoint}
+                  flightAllowedByWeather={weatherFlightSafe}
+                  weatherFlightReasons={weatherFlightReasons}
+                  onClose={() => setSidebarOpen(false)}
+                />
+              </div>
+            </div>
           </div>
         )}
       </div>

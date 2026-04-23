@@ -11,11 +11,66 @@ function boundaryToYandexRing(boundary) {
   return boundary.map(([lng, lat]) => [lat, lng]);
 }
 
+/** Кольцо Яндекс-карт [[lat, lng], ...] -> boundary API [[lng, lat], ...]. */
+function yandexRingToBoundary(ring) {
+  if (!Array.isArray(ring) || ring.length < 4) return null;
+  const normalized = ring.map((pair) => [pair?.[1], pair?.[0]]);
+  const first = normalized[0];
+  const last = normalized[normalized.length - 1];
+  if (!first || !last) return null;
+  if (first[0] !== last[0] || first[1] !== last[1]) {
+    normalized.push([first[0], first[1]]);
+  }
+  return normalized;
+}
+
+function rectCornersToBoundary(cornerA, cornerB) {
+  if (!cornerA || !cornerB) return null;
+  const minLat = Math.min(cornerA.lat, cornerB.lat);
+  const maxLat = Math.max(cornerA.lat, cornerB.lat);
+  const minLng = Math.min(cornerA.lng, cornerB.lng);
+  const maxLng = Math.max(cornerA.lng, cornerB.lng);
+  return [
+    [minLng, minLat],
+    [maxLng, minLat],
+    [maxLng, maxLat],
+    [minLng, maxLat],
+    [minLng, minLat],
+  ];
+}
+
+function isPointInsideBoundary(boundary, point) {
+  if (!Array.isArray(boundary) || boundary.length < 4 || !point) return false;
+  const vertices = boundary.slice(0, -1);
+  if (vertices.length < 3) return false;
+
+  const x = point.lng;
+  const y = point.lat;
+  let inside = false;
+
+  for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i, i += 1) {
+    const xi = vertices[i]?.[0];
+    const yi = vertices[i]?.[1];
+    const xj = vertices[j]?.[0];
+    const yj = vertices[j]?.[1];
+    if (![xi, yi, xj, yj].every(Number.isFinite)) continue;
+
+    const intersects = ((yi > y) !== (yj > y))
+      && (x < ((xj - xi) * (y - yi)) / ((yj - yi) || Number.EPSILON) + xi);
+    if (intersects) inside = !inside;
+  }
+
+  return inside;
+}
+
 export function YandexMap({
   drones,
   mapCenter,
   mapZoom = 13,
   onMapClick,
+  onDraftRectBoundaryChange,
+  onRectDrawComplete,
+  onZoneClick,
   onMapCenterChange,
   onDronePositionChange,
   placementMode = false,
@@ -30,7 +85,7 @@ export function YandexMap({
   zoneFitNonce = 0,
   /** Превью прямоугольника до сохранения зоны (тот же формат boundary). */
   draftRectBoundary = null,
-  /** Режим: пользователь кликает два угла прямоугольника. */
+  /** Режим рисования прямоугольника мышью (зажал-потянул-отпустил). */
   drawRectZoneMode = false,
 }) {
   const mapContainerRef = useRef(null);
@@ -41,6 +96,9 @@ export function YandexMap({
   const previewPolylineRef = useRef(null);
   const zonePolygonRef = useRef(null);
   const draftRectPolygonRef = useRef(null);
+  const draftRectGeometryChangeHandlerRef = useRef(null);
+  const isSyncingDraftRectRef = useRef(false);
+  const rectDrawStateRef = useRef({ active: false, start: null, last: null });
   const lastZoneFitNonceRef = useRef(null);
   const [mapLoaded, setMapLoaded] = useState(false);
   const [error, setError] = useState(null);
@@ -329,35 +387,17 @@ export function YandexMap({
     if (!mapLoaded || !mapInstanceRef.current || !window.ymaps) return;
     const map = mapInstanceRef.current;
 
-    if (draftRectPolygonRef.current) {
-      try {
-        map.geoObjects.remove(draftRectPolygonRef.current);
-      } catch {
-        /* ignore */
-      }
-      draftRectPolygonRef.current = null;
-    }
-
     const ring = boundaryToYandexRing(draftRectBoundary);
-    if (!ring) return;
-
-    const polygon = new window.ymaps.Polygon(
-      [ring],
-      {},
-      {
-        fillColor: 'rgba(251, 191, 36, 0.22)',
-        strokeColor: '#f59e0b',
-        strokeWidth: 3,
-        strokeOpacity: 0.95,
-        strokeStyle: 'shortdash',
-        interactivityModel: 'default#transparent',
-      }
-    );
-    map.geoObjects.add(polygon);
-    draftRectPolygonRef.current = polygon;
-
-    return () => {
+    if (!ring) {
       if (draftRectPolygonRef.current) {
+        if (draftRectGeometryChangeHandlerRef.current) {
+          try {
+            draftRectPolygonRef.current.geometry.events.remove('change', draftRectGeometryChangeHandlerRef.current);
+          } catch {
+            /* ignore */
+          }
+          draftRectGeometryChangeHandlerRef.current = null;
+        }
         try {
           map.geoObjects.remove(draftRectPolygonRef.current);
         } catch {
@@ -365,8 +405,57 @@ export function YandexMap({
         }
         draftRectPolygonRef.current = null;
       }
-    };
-  }, [mapLoaded, draftRectBoundary]);
+      return;
+    }
+
+    if (!draftRectPolygonRef.current) {
+      const polygon = new window.ymaps.Polygon(
+        [ring],
+        {},
+        {
+          fillColor: 'rgba(251, 191, 36, 0.22)',
+          strokeColor: '#f59e0b',
+          strokeWidth: 3,
+          strokeOpacity: 0.95,
+          strokeStyle: 'shortdash',
+          interactivityModel: 'default#geoObject',
+        }
+      );
+      map.geoObjects.add(polygon);
+      draftRectPolygonRef.current = polygon;
+
+      const handleDraftRectGeometryChange = () => {
+        if (isSyncingDraftRectRef.current) return;
+        if (typeof onDraftRectBoundaryChange !== 'function') return;
+        const coords = polygon.geometry.getCoordinates();
+        const nextRing = Array.isArray(coords) ? coords[0] : null;
+        const nextBoundary = yandexRingToBoundary(nextRing);
+        if (nextBoundary) onDraftRectBoundaryChange(nextBoundary);
+      };
+      draftRectGeometryChangeHandlerRef.current = handleDraftRectGeometryChange;
+      polygon.geometry.events.add('change', handleDraftRectGeometryChange);
+    } else {
+      const polygon = draftRectPolygonRef.current;
+      const currentCoords = polygon.geometry.getCoordinates();
+      const currentRing = Array.isArray(currentCoords) ? currentCoords[0] : null;
+      const currentBoundary = yandexRingToBoundary(currentRing);
+      const normalizedTargetBoundary = yandexRingToBoundary(ring);
+      if (JSON.stringify(currentBoundary) !== JSON.stringify(normalizedTargetBoundary)) {
+        isSyncingDraftRectRef.current = true;
+        try {
+          polygon.geometry.setCoordinates([ring]);
+        } finally {
+          isSyncingDraftRectRef.current = false;
+        }
+      }
+    }
+
+    try {
+      draftRectPolygonRef.current.editor.startEditing();
+    } catch {
+      /* ignore */
+    }
+  }, [mapLoaded, draftRectBoundary, onDraftRectBoundaryChange]);
 
   const createDroneIcon = (drone, isActive = false) => {
     const color = getDroneColor(drone.id);
@@ -458,19 +547,129 @@ export function YandexMap({
 
   useEffect(() => {
     if (!mapLoaded || !mapInstanceRef.current) return;
+    if (drawRectZoneMode) return;
 
     const map = mapInstanceRef.current;
     const handleClick = (e) => {
       const coords = e.get('coords');
+      if (!Array.isArray(coords) || coords.length < 2) return;
+      const clickPoint = { lat: coords[0], lng: coords[1] };
+      if (
+        typeof onZoneClick === 'function' &&
+        isPointInsideBoundary(zoneBoundary, clickPoint)
+      ) {
+        onZoneClick(zoneBoundary);
+        return;
+      }
       if (typeof onMapClick === 'function') {
-        onMapClick({ lat: coords[0], lng: coords[1] });
+        onMapClick(clickPoint);
       }
     };
 
     map.events.add('click', handleClick);
 
     return () => map.events.remove('click', handleClick);
-  }, [onMapClick, mapLoaded]);
+  }, [onMapClick, onZoneClick, zoneBoundary, mapLoaded, drawRectZoneMode]);
+
+  useEffect(() => {
+    if (!mapLoaded || !mapInstanceRef.current) return;
+    if (!drawRectZoneMode) return;
+    const map = mapInstanceRef.current;
+    const MIN_RECT_SPAN = 1e-7;
+
+    const finishRectDraw = (endPoint) => {
+      if (!rectDrawStateRef.current.active || !rectDrawStateRef.current.start) return;
+
+      const start = rectDrawStateRef.current.start;
+      const end = endPoint || rectDrawStateRef.current.last;
+      rectDrawStateRef.current = { active: false, start: null, last: null };
+
+      try {
+        map.behaviors.enable('drag');
+      } catch {
+        /* ignore */
+      }
+
+      if (!end) {
+        if (typeof onDraftRectBoundaryChange === 'function') onDraftRectBoundaryChange(null);
+        return;
+      }
+
+      const latSpan = Math.abs(end.lat - start.lat);
+      const lngSpan = Math.abs(end.lng - start.lng);
+      if (latSpan < MIN_RECT_SPAN || lngSpan < MIN_RECT_SPAN) {
+        if (typeof onDraftRectBoundaryChange === 'function') onDraftRectBoundaryChange(null);
+        return;
+      }
+
+      const boundary = rectCornersToBoundary(start, end);
+      if (boundary && typeof onDraftRectBoundaryChange === 'function') {
+        onDraftRectBoundaryChange(boundary);
+      }
+      if (typeof onRectDrawComplete === 'function') {
+        onRectDrawComplete();
+      }
+    };
+
+    const handleMouseDown = (e) => {
+      const coords = e.get('coords');
+      if (!Array.isArray(coords) || coords.length < 2) return;
+      rectDrawStateRef.current = {
+        active: true,
+        start: { lat: coords[0], lng: coords[1] },
+        last: { lat: coords[0], lng: coords[1] },
+      };
+      if (typeof onDraftRectBoundaryChange === 'function') {
+        onDraftRectBoundaryChange(null);
+      }
+      try {
+        map.behaviors.disable('drag');
+      } catch {
+        /* ignore */
+      }
+    };
+
+    const handleMouseMove = (e) => {
+      if (!rectDrawStateRef.current.active || !rectDrawStateRef.current.start) return;
+      const coords = e.get('coords');
+      if (!Array.isArray(coords) || coords.length < 2) return;
+      const current = { lat: coords[0], lng: coords[1] };
+      rectDrawStateRef.current.last = current;
+      const boundary = rectCornersToBoundary(rectDrawStateRef.current.start, current);
+      if (boundary && typeof onDraftRectBoundaryChange === 'function') {
+        onDraftRectBoundaryChange(boundary);
+      }
+    };
+
+    const handleMouseUp = (e) => {
+      const coords = e.get('coords');
+      const end =
+        Array.isArray(coords) && coords.length >= 2 ? { lat: coords[0], lng: coords[1] } : null;
+      finishRectDraw(end);
+    };
+
+    const handleWindowMouseUp = () => {
+      finishRectDraw(null);
+    };
+
+    map.events.add('mousedown', handleMouseDown);
+    map.events.add('mousemove', handleMouseMove);
+    map.events.add('mouseup', handleMouseUp);
+    window.addEventListener('mouseup', handleWindowMouseUp);
+
+    return () => {
+      map.events.remove('mousedown', handleMouseDown);
+      map.events.remove('mousemove', handleMouseMove);
+      map.events.remove('mouseup', handleMouseUp);
+      window.removeEventListener('mouseup', handleWindowMouseUp);
+      rectDrawStateRef.current = { active: false, start: null, last: null };
+      try {
+        map.behaviors.enable('drag');
+      } catch {
+        /* ignore */
+      }
+    };
+  }, [mapLoaded, drawRectZoneMode, onDraftRectBoundaryChange, onRectDrawComplete]);
 
   useEffect(() => {
     if (!mapLoaded || !mapInstanceRef.current || typeof onMapCenterChange !== 'function') return;
@@ -632,6 +831,12 @@ export function YandexMap({
             zonePolygonRef.current = null;
           }
           if (draftRectPolygonRef.current) {
+            if (draftRectGeometryChangeHandlerRef.current) {
+              try {
+                draftRectPolygonRef.current.geometry.events.remove('change', draftRectGeometryChangeHandlerRef.current);
+              } catch { }
+              draftRectGeometryChangeHandlerRef.current = null;
+            }
             try { mapInstanceRef.current.geoObjects.remove(draftRectPolygonRef.current); } catch { }
             draftRectPolygonRef.current = null;
           }

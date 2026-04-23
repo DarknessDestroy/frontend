@@ -156,6 +156,20 @@ export async function updateZoneWithKml(zoneId, file) {
   return extractData(response);
 }
 
+/** PATCH /api/v1/zones/:id — обновить boundary [[lng, lat], ...]. */
+export async function updateZoneWithBoundary(zoneId, boundary) {
+  if (zoneId == null) {
+    throw new Error('Выберите зону для редактирования');
+  }
+  if (!Array.isArray(boundary) || boundary.length < 4) {
+    throw new Error('Некорректный контур зоны');
+  }
+  const response = await apiPatch(`/api/v1/zones/${zoneId}`, {
+    zone: { boundary },
+  });
+  return extractData(response);
+}
+
 export async function syncDroneStateToBackend(droneId, dronePatch) {
   if (droneId == null) return null;
   const response = await apiPatch(`/api/v1/drones/${droneId}`, {

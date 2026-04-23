@@ -16,8 +16,7 @@ export function ShabloneScreen({
   templates,
   onStartCreateTemplate,
   onEditTemplateRoute,
-  onDeleteTemplate,
-  onLogout
+  onDeleteTemplate
 }) {
   const [deleteConfirmId, setDeleteConfirmId] = useState(null);
 
@@ -27,15 +26,14 @@ export function ShabloneScreen({
   };
 
   return (
-    <div className="w-full max-w-2xl mx-auto">
-      <div className="bg-gray-800/85 border border-gray-700/70 rounded-2xl shadow-2xl backdrop-blur-sm overflow-hidden">
+    <div className="w-full max-w-6xl mx-auto">
+      <div className="w-full max-w-2xl mx-auto bg-gray-800/85 border border-gray-700/70 rounded-2xl shadow-2xl backdrop-blur-sm overflow-hidden">
         <div className="px-6 py-5 border-b border-gray-700/80 bg-gradient-to-r from-gray-800 to-gray-900">
           <h2 className="text-2xl font-bold text-white">Шаблоны маршрутов патрулирования</h2>
           <p className="text-gray-400 text-sm mt-1">
             Создайте маршрут по карте, сохраните его как шаблон и используйте для дронов.
           </p>
         </div>
-
         <div className="px-6 py-4 flex flex-wrap gap-3 justify-between items-center bg-gray-800/70">
           <div className="flex gap-2">
             <button
@@ -57,19 +55,6 @@ export function ShabloneScreen({
               <span className="relative z-10">Начать работу</span>
             </button>
           </div>
-          {onLogout && (
-            <button
-              type="button"
-              onClick={onLogout}
-              className="group relative overflow-hidden shrink-0 px-4 py-2 bg-gradient-to-r from-gray-700 to-gray-800 text-white rounded-lg font-medium transition-all duration-300 ease-out border border-gray-600/80 shadow-sm ring-1 ring-gray-500/30 hover:ring-red-400/50 hover:shadow-md"
-            >
-              <span
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-0 bg-gradient-to-r from-red-600 to-rose-600 opacity-0 transition-opacity duration-300 ease-out group-hover:opacity-100"
-              />
-              <span className="relative z-10">Выйти</span>
-            </button>
-          )}
         </div>
 
         <div className="px-6 py-5">
