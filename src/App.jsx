@@ -312,6 +312,18 @@ function App() {
     const z = backendZones.find((x) => x.id === activeZoneId);
     return Array.isArray(z?.boundary) ? z.boundary : null;
   }, [backendZones, activeZoneId]);
+  const zonesForMap = useMemo(
+    () =>
+      backendZones
+        .filter((z) => Array.isArray(z?.boundary) && z.boundary.length >= 4)
+        .map((z) => ({
+          id: z.id,
+          boundary: z.boundary,
+          color: /^#[0-9a-fA-F]{6}$/.test(zoneColorsById[String(z.id)]) ? zoneColorsById[String(z.id)] : '#22c55e',
+          isActive: z.id === activeZoneId,
+        })),
+    [backendZones, zoneColorsById, activeZoneId]
+  );
   const activeZoneColor = useMemo(() => {
     if (activeZoneId == null) return '#22c55e';
     const saved = zoneColorsById[String(activeZoneId)];
@@ -830,6 +842,26 @@ function App() {
 
     setGlobalMissionLog(prev => [globalLogEntry, ...prev].slice(0, 100));
   };
+
+  const addToZoneLog = useCallback((message, data = {}) => {
+    const safeData = {};
+    Object.keys(data).forEach((key) => {
+      if (typeof data[key] === 'object' && data[key] !== null) {
+        safeData[key] = JSON.stringify(data[key]);
+      } else {
+        safeData[key] = data[key];
+      }
+    });
+    const zoneLogEntry = {
+      id: Date.now(),
+      droneId: null,
+      droneName: 'Редактор зон',
+      timestamp: new Date().toISOString(),
+      message,
+      data: safeData,
+    };
+    setGlobalMissionLog((prev) => [zoneLogEntry, ...prev].slice(0, 100));
+  }, []);
 
   const hydrateBackendContext = useCallback(async () => {
     const zones = await fetchZonesFromBackend();
@@ -1622,6 +1654,7 @@ function App() {
     }
     setEditingZoneId(null);
     setDraftRectBoundary(null);
+    setNewRectZoneName('Зона (прямоугольник)');
     setDrawRectZoneMode(true);
   }, [drawRectZoneMode]);
 
@@ -1629,6 +1662,7 @@ function App() {
     setEditingZoneId(null);
     setDraftRectBoundary(null);
     setDrawRectZoneMode(false);
+    setNewRectZoneName('Зона (прямоугольник)');
   }, []);
 
   const handleDraftRectBoundaryChange = useCallback((nextBoundary) => {
@@ -1639,25 +1673,40 @@ function App() {
     setDrawRectZoneMode(false);
   }, []);
 
-  const handleZoneClickToEdit = useCallback((boundary) => {
-    if (activeZoneId == null) return;
+  const handleZoneClickToEdit = useCallback((boundary, zoneMeta) => {
+    const targetZoneId = zoneMeta?.id ?? activeZoneId;
+    if (targetZoneId == null) return;
     if (drawRectZoneMode || templateEditMode || placementMode || isRouteEditMode) return;
     if (!Array.isArray(boundary) || boundary.length < 4) return;
-    setEditingZoneId(activeZoneId);
+    const targetZone = backendZones.find((z) => z.id === targetZoneId);
+    setActiveZoneId(targetZoneId);
+    const u = backendContextRef.current.userId;
+    if (u != null) {
+      backendContextRef.current = { userId: u, zoneId: targetZoneId };
+    }
+    setEditingZoneId(targetZoneId);
+    setNewRectZoneName(targetZone?.name ?? 'Зона (прямоугольник)');
     setDraftRectBoundary(boundary.map(([lng, lat]) => [lng, lat]));
-  }, [activeZoneId, drawRectZoneMode, templateEditMode, placementMode, isRouteEditMode]);
+  }, [activeZoneId, backendZones, drawRectZoneMode, templateEditMode, placementMode, isRouteEditMode]);
 
   const saveDraftRectZone = useCallback(async () => {
     if (!draftRectBoundary?.length) return;
     setRectZoneBusy(true);
     try {
       if (editingZoneId != null) {
-        await updateZoneWithBoundary(editingZoneId, draftRectBoundary);
+        const nextName = newRectZoneName.trim() || 'Зона (прямоугольник)';
+        await updateZoneWithBoundary(editingZoneId, draftRectBoundary, nextName);
         const zones = await fetchZonesFromBackend();
         setBackendZones(zones);
+        const updatedZone = zones.find((z) => z.id === editingZoneId);
+        addToZoneLog('🛠️ Граница зоны изменена', {
+          zoneId: editingZoneId,
+          zoneName: updatedZone?.name ?? `ID ${editingZoneId}`,
+        });
         setActiveZoneId(editingZoneId);
         setEditingZoneId(null);
         setDraftRectBoundary(null);
+        setNewRectZoneName(updatedZone?.name ?? nextName);
         return;
       }
 
@@ -1672,6 +1721,10 @@ function App() {
         if (u != null) {
           backendContextRef.current = { userId: u, zoneId: newId };
         }
+        addToZoneLog('🆕 Создана новая зона', {
+          zoneId: newId,
+          zoneName: created?.name ?? name,
+        });
       }
       setEditingZoneId(null);
       setDraftRectBoundary(null);
@@ -1681,7 +1734,7 @@ function App() {
     } finally {
       setRectZoneBusy(false);
     }
-  }, [draftRectBoundary, newRectZoneName, editingZoneId]);
+  }, [draftRectBoundary, newRectZoneName, editingZoneId, addToZoneLog]);
 
   const handleDeleteActiveZone = useCallback(async () => {
     if (activeZoneId == null) return;
@@ -1695,6 +1748,10 @@ function App() {
       await deleteZoneInBackend(activeZoneId);
       const zones = await fetchZonesFromBackend();
       setBackendZones(zones);
+      addToZoneLog('🗑️ Зона удалена', {
+        zoneId: activeZoneId,
+        zoneName: targetZone?.name ?? `ID ${activeZoneId}`,
+      });
 
       const nextActiveZoneId = zones.length > 0 ? zones[0].id : null;
       setActiveZoneId(nextActiveZoneId);
@@ -1710,7 +1767,7 @@ function App() {
     } finally {
       setRectZoneBusy(false);
     }
-  }, [activeZoneId, backendZones]);
+  }, [activeZoneId, backendZones, addToZoneLog]);
 
   const pendingKmlActionRef = useRef('create');
 
@@ -1759,6 +1816,11 @@ function App() {
               backendContextRef.current = { userId: u, zoneId: newId };
             }
             setZoneFitNonce((n) => n + 1);
+            addToZoneLog('🆕 Зона создана из KML', {
+              zoneId: newId,
+              zoneName: created?.name ?? baseName,
+              fileName: file.name,
+            });
           }
           setZoneKmlMessage(`Зона «${created?.name ?? baseName}» создана.`);
           setZoneKmlIsError(false);
@@ -1770,6 +1832,12 @@ function App() {
           const zones = await fetchZonesFromBackend();
           setBackendZones(zones);
           setZoneFitNonce((n) => n + 1);
+          const updatedZone = zones.find((z) => z.id === activeZoneId);
+          addToZoneLog('🛠️ Контур зоны обновлён из KML', {
+            zoneId: activeZoneId,
+            zoneName: updatedZone?.name ?? `ID ${activeZoneId}`,
+            fileName: file.name,
+          });
           setZoneKmlMessage('Контур выбранной зоны обновлён из KML.');
           setZoneKmlIsError(false);
         }
@@ -1780,7 +1848,7 @@ function App() {
         setZoneKmlBusy(false);
       }
     },
-    [activeZoneId, newZoneKmlName]
+    [activeZoneId, newZoneKmlName, addToZoneLog]
   );
 
   const handleDroneClick = (drone) => {
@@ -1872,6 +1940,7 @@ function App() {
                   onRectDrawComplete={handleRectDrawComplete}
                   editingPath={templateDraftPath}
                   forceResize={false}
+                  zones={zonesForMap}
                   zoneBoundary={activeZoneBoundary}
                   zoneColor={activeZoneColor}
                   zoneFitNonce={zoneFitNonce}
@@ -1998,20 +2067,6 @@ function App() {
               <div className="flex-1 relative min-h-0">
                 {(drawRectZoneMode || draftRectBoundary) && (
                   <div className="absolute top-2 left-2 z-[130] w-[min(82vw,340px)] rounded-xl border border-amber-600/40 bg-gray-900/80 p-2 backdrop-blur-sm">
-                    {activeZoneId != null && (
-                      <label className="mb-2 relative w-full px-3 py-2 min-h-[42px] bg-gray-800 border border-gray-500/70 rounded-lg text-white text-sm flex items-center justify-end">
-                        <span className="pointer-events-none absolute inset-0 flex items-center justify-center whitespace-nowrap">
-                          Цвет зоны
-                        </span>
-                        <input
-                          type="color"
-                          value={activeZoneColor}
-                          onChange={handleActiveZoneColorChange}
-                          className="h-7 w-10 p-0 border-0 rounded cursor-pointer bg-transparent"
-                          title="Выбрать цвет активной зоны"
-                        />
-                      </label>
-                    )}
                     {drawRectZoneMode && !draftRectBoundary && (
                       <p className="text-xs text-amber-200">
                         Зажмите кнопку мыши на карте, потяните и отпустите, чтобы нарисовать прямоугольник.
@@ -2020,14 +2075,26 @@ function App() {
                     {draftRectBoundary && (
                       <div className="flex flex-col gap-2">
                         <div className="flex flex-col gap-2 items-stretch">
-                          {editingZoneId == null && (
-                            <input
-                              type="text"
-                              value={newRectZoneName}
-                              onChange={(e) => setNewRectZoneName(e.target.value)}
-                              placeholder="Имя зоны"
-                              className="px-3 py-2 bg-gray-800 border border-amber-700/60 rounded-lg text-white text-sm min-h-[42px] w-full"
-                            />
+                          <input
+                            type="text"
+                            value={newRectZoneName}
+                            onChange={(e) => setNewRectZoneName(e.target.value)}
+                            placeholder="Имя зоны"
+                            className="px-3 py-2 bg-gray-800 border border-amber-700/60 rounded-lg text-white text-sm min-h-[42px] w-full"
+                          />
+                          {activeZoneId != null && (
+                            <label className="relative w-full px-3 py-2 min-h-[42px] bg-gray-800 border border-gray-500/70 rounded-lg text-white text-sm flex items-center justify-end">
+                              <span className="pointer-events-none absolute inset-0 flex items-center justify-center whitespace-nowrap">
+                                Цвет зоны
+                              </span>
+                              <input
+                                type="color"
+                                value={activeZoneColor}
+                                onChange={handleActiveZoneColorChange}
+                                className="h-7 w-10 p-0 border-0 rounded cursor-pointer bg-transparent"
+                                title="Выбрать цвет активной зоны"
+                              />
+                            </label>
                           )}
                           <button
                             type="button"
@@ -2082,6 +2149,7 @@ function App() {
                   forceResize={true}
                   routeEditMode={isRouteEditMode}
                   previewPath={templateToApplyId ? (missionTemplates.find(t => t.id === templateToApplyId)?.path) ?? null : null}
+                  zones={zonesForMap}
                   zoneBoundary={activeZoneBoundary}
                   zoneColor={activeZoneColor}
                   zoneFitNonce={zoneFitNonce}

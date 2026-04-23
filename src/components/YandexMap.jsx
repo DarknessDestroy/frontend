@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 if (typeof window !== 'undefined') {
   if (!window.yandexMapsLoading) window.yandexMapsLoading = false;
@@ -109,6 +109,8 @@ export function YandexMap({
   editingPath = null,
   previewPath = null,
   routeEditMode = false,
+  /** Список зон для одновременного отображения: [{ id, boundary, color, isActive }]. */
+  zones = [],
   /** Полигон активной зоны (boundary из backend, [lng, lat]). */
   zoneBoundary = null,
   /** Цвет активной зоны (hex), например #22c55e. */
@@ -127,6 +129,8 @@ export function YandexMap({
   const editingPolylineRef = useRef(null);
   const previewPolylineRef = useRef(null);
   const zonePolygonRef = useRef(null);
+  const otherZonePolygonsRef = useRef([]);
+  const hoveredPassiveZoneIdRef = useRef(null);
   const zoneBoundaryBaseRef = useRef(null);
   const zoneHoveredRef = useRef(false);
   const draftRectPolygonRef = useRef(null);
@@ -144,6 +148,18 @@ export function YandexMap({
   const zoneStrokeColor = /^#[0-9a-fA-F]{6}$/.test(zoneColor) ? zoneColor : '#22c55e';
   const zoneFillColor = `${zoneStrokeColor}2e`;
   const zoneHoverFillColor = `${zoneStrokeColor}47`;
+  const normalizedZones = useMemo(
+    () =>
+      Array.isArray(zones)
+        ? zones.filter((z) => Array.isArray(z?.boundary) && z.boundary.length >= 4)
+        : [],
+    [zones]
+  );
+  const activeZoneFromList = normalizedZones.find((z) => z?.isActive) ?? null;
+  const activeBoundary = activeZoneFromList?.boundary ?? zoneBoundary;
+  const activeStroke = /^#[0-9a-fA-F]{6}$/.test(activeZoneFromList?.color) ? activeZoneFromList.color : zoneStrokeColor;
+  const activeFill = `${activeStroke}2e`;
+  const activeHoverFill = `${activeStroke}47`;
 
   useEffect(() => {
     if (window.ymaps && window.yandexMapsLoaded) {
@@ -364,6 +380,17 @@ export function YandexMap({
     if (!mapLoaded || !mapInstanceRef.current || !window.ymaps) return;
     const map = mapInstanceRef.current;
 
+    if (otherZonePolygonsRef.current.length) {
+      otherZonePolygonsRef.current.forEach((item) => {
+        try {
+          map.geoObjects.remove(item.polygon);
+        } catch {
+          /* ignore */
+        }
+      });
+      otherZonePolygonsRef.current = [];
+    }
+
     if (zonePolygonRef.current) {
       try {
         map.geoObjects.remove(zonePolygonRef.current);
@@ -373,7 +400,39 @@ export function YandexMap({
       zonePolygonRef.current = null;
     }
 
-    const ring = boundaryToYandexRing(zoneBoundary);
+    const zonesToRender = normalizedZones.length
+      ? normalizedZones
+      : (zoneBoundary ? [{ id: 'legacy-active', boundary: zoneBoundary, color: zoneColor, isActive: true }] : []);
+
+    const activeEntry = zonesToRender.find((z) => z?.isActive) ?? zonesToRender[0] ?? null;
+    const passiveEntries = activeEntry
+      ? zonesToRender.filter((z) => String(z.id) !== String(activeEntry.id))
+      : [];
+
+    passiveEntries.forEach((entry) => {
+      const passiveRing = boundaryToYandexRing(entry.boundary);
+      if (!passiveRing) return;
+      const stroke = /^#[0-9a-fA-F]{6}$/.test(entry?.color) ? entry.color : '#22c55e';
+      const poly = new window.ymaps.Polygon(
+        [passiveRing],
+        {},
+        {
+          fillColor: `${stroke}1f`,
+          strokeColor: stroke,
+          strokeWidth: 2,
+          strokeOpacity: 0.75,
+          interactivityModel: 'default#transparent',
+        }
+      );
+      map.geoObjects.add(poly);
+      otherZonePolygonsRef.current.push({
+        id: String(entry.id),
+        polygon: poly,
+        color: stroke,
+      });
+    });
+
+    const ring = boundaryToYandexRing(activeEntry?.boundary);
     if (!ring) {
       zoneBoundaryBaseRef.current = null;
       zoneHoveredRef.current = false;
@@ -386,8 +445,8 @@ export function YandexMap({
       [ring],
       {},
       {
-        fillColor: zoneFillColor,
-        strokeColor: zoneStrokeColor,
+        fillColor: activeFill,
+        strokeColor: activeStroke,
         strokeWidth: 2,
         strokeOpacity: 0.95,
         // Иначе полигон «съедает» клики: нельзя разместить дрон и поставить точки маршрута.
@@ -415,6 +474,17 @@ export function YandexMap({
     return () => {
       zoneBoundaryBaseRef.current = null;
       zoneHoveredRef.current = false;
+      hoveredPassiveZoneIdRef.current = null;
+      if (otherZonePolygonsRef.current.length) {
+        otherZonePolygonsRef.current.forEach((item) => {
+          try {
+            map.geoObjects.remove(item.polygon);
+          } catch {
+            /* ignore */
+          }
+        });
+        otherZonePolygonsRef.current = [];
+      }
       if (zonePolygonRef.current) {
         try {
           map.geoObjects.remove(zonePolygonRef.current);
@@ -424,10 +494,10 @@ export function YandexMap({
         zonePolygonRef.current = null;
       }
     };
-  }, [mapLoaded, zoneBoundary, zoneFitNonce, zoneFillColor, zoneStrokeColor]);
+  }, [mapLoaded, normalizedZones, zoneBoundary, zoneColor, zoneFitNonce, activeFill, activeStroke]);
 
   useEffect(() => {
-    if (!mapLoaded || !mapInstanceRef.current || !zoneBoundary || drawRectZoneMode) return;
+    if (!mapLoaded || !mapInstanceRef.current || !activeBoundary || drawRectZoneMode) return;
     const map = mapInstanceRef.current;
 
     const setHoverState = (hovered) => {
@@ -440,10 +510,46 @@ export function YandexMap({
           hovered ? scaleRingAroundCenter(baseRing, 1.0125) : baseRing,
         ]);
         zonePolygonRef.current.options.set({
-          fillColor: hovered ? zoneHoverFillColor : zoneFillColor,
-          strokeColor: zoneStrokeColor,
+          fillColor: hovered ? activeHoverFill : activeFill,
+          strokeColor: activeStroke,
           strokeWidth: hovered ? 3 : 2,
         });
+      } catch {
+        /* ignore */
+      }
+    };
+
+    const resetPassiveHover = () => {
+      if (!otherZonePolygonsRef.current.length) return;
+      otherZonePolygonsRef.current.forEach((item) => {
+        try {
+          item.polygon.options.set({
+            fillColor: `${item.color}1f`,
+            strokeColor: item.color,
+            strokeWidth: 2,
+            strokeOpacity: 0.75,
+          });
+        } catch {
+          /* ignore */
+        }
+      });
+      hoveredPassiveZoneIdRef.current = null;
+    };
+
+    const setPassiveHover = (zoneId) => {
+      const normalizedId = String(zoneId);
+      if (hoveredPassiveZoneIdRef.current === normalizedId) return;
+      resetPassiveHover();
+      const target = otherZonePolygonsRef.current.find((item) => item.id === normalizedId);
+      if (!target) return;
+      try {
+        target.polygon.options.set({
+          fillColor: `${target.color}47`,
+          strokeColor: target.color,
+          strokeWidth: 3,
+          strokeOpacity: 0.95,
+        });
+        hoveredPassiveZoneIdRef.current = normalizedId;
       } catch {
         /* ignore */
       }
@@ -452,10 +558,32 @@ export function YandexMap({
     const handleMouseMove = (e) => {
       const coords = e.get('coords');
       if (!Array.isArray(coords) || coords.length < 2) return;
-      const inside = isPointInsideBoundary(zoneBoundary, { lat: coords[0], lng: coords[1] });
-      setHoverState(inside);
+      const point = { lat: coords[0], lng: coords[1] };
+      const zonesForHit = normalizedZones.length
+        ? normalizedZones
+        : (activeBoundary ? [{ id: null, boundary: activeBoundary, isActive: true }] : []);
+      const hoveredZone = [...zonesForHit]
+        .reverse()
+        .find((z) => isPointInsideBoundary(z?.boundary, point));
+
+      if (!hoveredZone) {
+        setHoverState(false);
+        resetPassiveHover();
+        return;
+      }
+      if (hoveredZone.isActive) {
+        setHoverState(true);
+        resetPassiveHover();
+        return;
+      }
+
+      setHoverState(false);
+      setPassiveHover(hoveredZone.id);
     };
-    const handleMouseOut = () => setHoverState(false);
+    const handleMouseOut = () => {
+      setHoverState(false);
+      resetPassiveHover();
+    };
 
     map.events.add('mousemove', handleMouseMove);
     map.events.add('mouseout', handleMouseOut);
@@ -465,7 +593,7 @@ export function YandexMap({
       map.events.remove('mouseout', handleMouseOut);
       setHoverState(false);
     };
-  }, [mapLoaded, zoneBoundary, drawRectZoneMode, zoneFillColor, zoneHoverFillColor, zoneStrokeColor]);
+  }, [mapLoaded, activeBoundary, normalizedZones, drawRectZoneMode, activeFill, activeHoverFill, activeStroke]);
 
   useEffect(() => {
     if (!mapLoaded || !mapInstanceRef.current || !window.ymaps) return;
@@ -643,11 +771,17 @@ export function YandexMap({
       const coords = e.get('coords');
       if (!Array.isArray(coords) || coords.length < 2) return;
       const clickPoint = { lat: coords[0], lng: coords[1] };
+      const zonesForHit = normalizedZones.length
+        ? normalizedZones
+        : (activeBoundary ? [{ id: null, boundary: activeBoundary }] : []);
+      const clickedZone = [...zonesForHit]
+        .reverse()
+        .find((z) => isPointInsideBoundary(z?.boundary, clickPoint));
       if (
         typeof onZoneClick === 'function' &&
-        isPointInsideBoundary(zoneBoundary, clickPoint)
+        clickedZone
       ) {
-        const ring = boundaryToYandexRing(zoneBoundary);
+        const ring = boundaryToYandexRing(clickedZone.boundary);
         if (ring && ring.length > 0) {
           let minLat = Number.POSITIVE_INFINITY;
           let maxLat = Number.NEGATIVE_INFINITY;
@@ -683,7 +817,7 @@ export function YandexMap({
             }
           }
         }
-        onZoneClick(zoneBoundary);
+        onZoneClick(clickedZone.boundary, clickedZone);
         return;
       }
       if (typeof onMapClick === 'function') {
@@ -694,7 +828,7 @@ export function YandexMap({
     map.events.add('click', handleClick);
 
     return () => map.events.remove('click', handleClick);
-  }, [onMapClick, onZoneClick, zoneBoundary, mapLoaded, drawRectZoneMode]);
+  }, [onMapClick, onZoneClick, activeBoundary, normalizedZones, mapLoaded, drawRectZoneMode]);
 
   useEffect(() => {
     if (!mapLoaded || !mapInstanceRef.current) return;
