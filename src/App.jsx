@@ -341,7 +341,6 @@ function App() {
               backendContextRef.current = { userId, zoneId: next };
               return next;
             });
-            setZoneFitNonce((n) => n + 1);
           } else {
             setActiveZoneId(null);
             backendContextRef.current = {
@@ -1949,7 +1948,7 @@ function App() {
               </div>
               <div className="flex-1 relative min-h-0">
                 {(drawRectZoneMode || draftRectBoundary) && (
-                  <div className="absolute top-2 left-2 z-[130] w-[min(92vw,510px)] rounded-xl border border-amber-600/40 bg-gray-900/80 p-3 backdrop-blur-sm">
+                  <div className="absolute top-2 left-2 z-[130] w-[min(92vw,560px)] rounded-xl border border-amber-600/40 bg-gray-900/80 p-3 backdrop-blur-sm">
                     {drawRectZoneMode && !draftRectBoundary && (
                       <p className="text-xs text-amber-200">
                         Зажмите кнопку мыши на карте, потяните и отпустите, чтобы нарисовать прямоугольник.
