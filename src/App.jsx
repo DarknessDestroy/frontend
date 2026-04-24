@@ -48,6 +48,8 @@ const DESKTOP_SWITCH_EASE = 'cubic-bezier(0.16, 1, 0.3, 1)';
 const FIRST_WAYPOINT_TRANSIT_THRESHOLD_M = 10;
 /** Радиус (м): клик рядом с точкой замыкает маршрут в этой точке. */
 const ROUTE_LOOP_SNAP_THRESHOLD_M = 15;
+/** Минимальный интервал между одинаковыми предупреждениями о выходе маршрута за зону. */
+const ROUTE_ZONE_REJECT_LOG_COOLDOWN_MS = 1200;
 const TELEMETRY_SEND_EVERY_MS = 1000;
 const ZONE_COLORS_STORAGE_KEY = 'zone_colors_v1';
 
@@ -119,6 +121,26 @@ function mapBackendDroneToFrontend(drone, index) {
     battery: Number.isFinite(batteryValue) ? batteryValue : (fallback.battery ?? 100),
     backendStatus: drone?.status ?? 'idle'
   });
+}
+
+function isPointInsideZoneBoundary(boundary, point) {
+  if (!Array.isArray(boundary) || boundary.length < 4 || !point) return false;
+  const px = Number(point.lng);
+  const py = Number(point.lat);
+  if (!Number.isFinite(px) || !Number.isFinite(py)) return false;
+
+  const vertices = boundary.slice(0, -1);
+  let inside = false;
+  for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
+    const [xi, yi] = vertices[i];
+    const [xj, yj] = vertices[j];
+    if (![xi, yi, xj, yj].every(Number.isFinite)) continue;
+    const intersects =
+      (yi > py) !== (yj > py) &&
+      px < ((xj - xi) * (py - yi)) / ((yj - yi) || Number.EPSILON) + xi;
+    if (intersects) inside = !inside;
+  }
+  return inside;
 }
 
 function App() {
@@ -276,6 +298,7 @@ function App() {
   const [backendZones, setBackendZones] = useState([]);
   const [activeZoneId, setActiveZoneId] = useState(null);
   const activeZoneIdRef = useRef(null);
+  const routeZoneRejectLogAtRef = useRef(0);
   const [zoneColorsById, setZoneColorsById] = useState(() => {
     try {
       const raw = localStorage.getItem(ZONE_COLORS_STORAGE_KEY);
@@ -694,6 +717,14 @@ function App() {
     if (selectedDroneForSidebar !== null && isRouteEditMode) {
       const drone = drones.find(d => d.id === selectedDroneForSidebar);
       if (drone && !drone.isFlying) {
+        if (!Array.isArray(activeZoneBoundary) || activeZoneBoundary.length < 4) {
+          addToDroneLog(selectedDroneForSidebar, '⚠️ Нельзя строить маршрут: сначала выберите активную зону');
+          return;
+        }
+        if (!isPointInsideZoneBoundary(activeZoneBoundary, latlng)) {
+          addToDroneLog(selectedDroneForSidebar, '⚠️ Точку можно поставить только внутри активной зоны');
+          return;
+        }
         const path = Array.isArray(drone.path) ? drone.path : [];
         const snappedPointIndex = path.findIndex((point) => {
           if (!Array.isArray(point) || point.length < 2) return false;
@@ -736,6 +767,11 @@ function App() {
         }
         addRoutePoint(selectedDroneForSidebar, latlng);
       }
+      return;
+    }
+    if (!drawRectZoneMode && (editingZoneId != null || draftRectBoundary?.length)) {
+      setEditingZoneId(null);
+      setDraftRectBoundary(null);
     }
   };
 
@@ -784,12 +820,27 @@ function App() {
 
   const handleRoutePathChange = useCallback((nextPath) => {
     if (selectedDroneForSidebar == null || !Array.isArray(nextPath)) return;
+    const normalizedPath = nextPath
+      .filter((p) => Array.isArray(p) && p.length >= 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]))
+      .map((p) => [p[0], p[1]]);
+
+    if (
+      Array.isArray(activeZoneBoundary) &&
+      activeZoneBoundary.length >= 4 &&
+      normalizedPath.some(([lat, lng]) => !isPointInsideZoneBoundary(activeZoneBoundary, { lat, lng }))
+    ) {
+      const now = Date.now();
+      if (now - routeZoneRejectLogAtRef.current > ROUTE_ZONE_REJECT_LOG_COOLDOWN_MS) {
+        routeZoneRejectLogAtRef.current = now;
+        addToDroneLog(selectedDroneForSidebar, '⚠️ Маршрут должен оставаться внутри активной зоны');
+      }
+      return;
+    }
+    routeZoneRejectLogAtRef.current = 0;
+
     setDrones((prev) =>
       prev.map((d) => {
         if (d.id !== selectedDroneForSidebar) return d;
-        const normalizedPath = nextPath
-          .filter((p) => Array.isArray(p) && p.length >= 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]))
-          .map((p) => [p[0], p[1]]);
         const missionParams = computeMissionParamsFromPath(normalizedPath, d.maxSpeed, d.battery);
         return {
           ...d,
@@ -798,7 +849,20 @@ function App() {
         };
       })
     );
-  }, [selectedDroneForSidebar, computeMissionParamsFromPath]);
+  }, [selectedDroneForSidebar, computeMissionParamsFromPath, activeZoneBoundary]);
+
+  const handleToggleRouteMode = () => {
+    if (isRouteEditMode) {
+      setIsRouteEditMode(false);
+      return;
+    }
+    if (!selectedDroneForSidebar) return;
+    if (!Array.isArray(activeZoneBoundary) || activeZoneBoundary.length < 4) {
+      addToDroneLog(selectedDroneForSidebar, '⚠️ Сначала выберите или создайте активную зону');
+      return;
+    }
+    setIsRouteEditMode(true);
+  };
 
   const undoLastPoint = (droneId) => {
     if (!droneId) droneId = selectedDroneForSidebar;
@@ -1635,7 +1699,6 @@ function App() {
           d.id !== droneId ? d : { ...d, position: { lat: firstWaypoint[0], lng: firstWaypoint[1] } }
         )
       );
-      setMapCenter([firstWaypoint[0], firstWaypoint[1]]);
       addToDroneLog(droneId, '📍 Дрон размещён на первой точке миссии');
       return;
     }
@@ -1651,7 +1714,6 @@ function App() {
           d.id !== droneId ? d : { ...d, position: { lat: firstWaypoint[0], lng: firstWaypoint[1] } }
         )
       );
-      setMapCenter([firstWaypoint[0], firstWaypoint[1]]);
       addToDroneLog(droneId, '📍 Дрон уже у первой точки миссии');
       return;
     }
@@ -1660,7 +1722,6 @@ function App() {
     if (!missionParams || drone.battery < missionParams.batteryConsumption + 10) {
       return;
     }
-    setMapCenter([firstWaypoint[0], firstWaypoint[1]]);
     setDrones(prev =>
       prev.map(d => {
         if (d.id !== droneId) return d;
@@ -2358,7 +2419,7 @@ function App() {
                 onClearLogs={() => setGlobalMissionLog([])}
                 onDroneClick={handleDroneClick}
                 isRouteEditMode={isRouteEditMode}
-                onToggleRouteMode={() => setIsRouteEditMode(prev => !prev)}
+                onToggleRouteMode={handleToggleRouteMode}
                 onCenterToFirstWaypoint={centerMapToFirstWaypoint}
                 onFlyToFirstWaypoint={flyDroneToFirstWaypoint}
                 flightAllowedByWeather={weatherFlightSafe}

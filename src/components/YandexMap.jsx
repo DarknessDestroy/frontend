@@ -93,6 +93,18 @@ function isPointInsideBoundary(boundary, point) {
   return inside;
 }
 
+function areSamePolylineCoords(currentCoords, nextCoords) {
+  if (!Array.isArray(currentCoords) || !Array.isArray(nextCoords)) return false;
+  if (currentCoords.length !== nextCoords.length) return false;
+  for (let i = 0; i < currentCoords.length; i += 1) {
+    const a = currentCoords[i];
+    const b = nextCoords[i];
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length < 2 || b.length < 2) return false;
+    if (a[0] !== b[0] || a[1] !== b[1]) return false;
+  }
+  return true;
+}
+
 export function YandexMap({
   drones,
   mapCenter,
@@ -272,15 +284,27 @@ export function YandexMap({
 
   const createDroneRoute = (map, drone) => {
     if (!drone.path || drone.path.length < 2) return;
-    if (routePolylinesRef.current[drone.id]) {
-      map.geoObjects.remove(routePolylinesRef.current[drone.id]);
+    const nextCoords = drone.path.map((p) => [p[0], p[1]]);
+    const strokeColor = drone.id === selectedDroneId ? '#FF0000' : '#3b82f6';
+    const existingPolyline = routePolylinesRef.current[drone.id];
+    if (existingPolyline) {
+      const currentCoords = existingPolyline.geometry.getCoordinates();
+      if (!areSamePolylineCoords(currentCoords, nextCoords)) {
+        existingPolyline.geometry.setCoordinates(nextCoords);
+      }
+      existingPolyline.options.set({
+        strokeColor,
+        strokeWidth: 3,
+        strokeOpacity: 0.7,
+      });
+      return;
     }
 
     const polyline = new window.ymaps.Polyline(
-      drone.path.map(p => [p[0], p[1]]),
+      nextCoords,
       {},
       {
-        strokeColor: drone.id === selectedDroneId ? '#FF0000' : '#3b82f6',
+        strokeColor,
         strokeWidth: 3,
         strokeOpacity: 0.7
       }
@@ -845,6 +869,12 @@ export function YandexMap({
       const coords = e.get('coords');
       if (!Array.isArray(coords) || coords.length < 2) return;
       const clickPoint = { lat: coords[0], lng: coords[1] };
+      if (routeEditMode) {
+        if (typeof onMapClick === 'function') {
+          onMapClick(clickPoint);
+        }
+        return;
+      }
       const zonesForHit = normalizedZones.length
         ? normalizedZones
         : (activeBoundary ? [{ id: null, boundary: activeBoundary }] : []);
@@ -902,7 +932,7 @@ export function YandexMap({
     map.events.add('click', handleClick);
 
     return () => map.events.remove('click', handleClick);
-  }, [onMapClick, onZoneClick, activeBoundary, normalizedZones, mapLoaded, drawRectZoneMode]);
+  }, [onMapClick, onZoneClick, activeBoundary, normalizedZones, mapLoaded, drawRectZoneMode, routeEditMode]);
 
   useEffect(() => {
     if (!mapLoaded || !mapInstanceRef.current) return;
