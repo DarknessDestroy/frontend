@@ -107,6 +107,8 @@ export function YandexMap({
   selectedDroneId = null,
   forceResize = false,
   editingPath = null,
+  routeEditPath = null,
+  onRoutePathChange,
   previewPath = null,
   routeEditMode = false,
   /** Список зон для одновременного отображения: [{ id, boundary, color, isActive }]. */
@@ -128,6 +130,9 @@ export function YandexMap({
   const routePolylinesRef = useRef({});
   const editingPolylineRef = useRef(null);
   const previewPolylineRef = useRef(null);
+  const routeEditPolylineRef = useRef(null);
+  const routeEditGeometryChangeHandlerRef = useRef(null);
+  const isSyncingRouteEditRef = useRef(false);
   const zonePolygonRef = useRef(null);
   const otherZonePolygonsRef = useRef([]);
   const hoveredPassiveZoneIdRef = useRef(null);
@@ -375,6 +380,75 @@ export function YandexMap({
       }
     };
   }, [mapLoaded, previewPath]);
+
+  useEffect(() => {
+    if (!mapLoaded || !mapInstanceRef.current || !window.ymaps) return;
+    const map = mapInstanceRef.current;
+    const path = Array.isArray(routeEditPath) ? routeEditPath : [];
+
+    if (!routeEditMode || !selectedDroneId || path.length === 0) {
+      if (routeEditGeometryChangeHandlerRef.current && routeEditPolylineRef.current) {
+        try {
+          routeEditPolylineRef.current.geometry.events.remove('change', routeEditGeometryChangeHandlerRef.current);
+        } catch { /* ignore */ }
+        routeEditGeometryChangeHandlerRef.current = null;
+      }
+      if (routeEditPolylineRef.current) {
+        try { map.geoObjects.remove(routeEditPolylineRef.current); } catch { /* ignore */ }
+        routeEditPolylineRef.current = null;
+      }
+      return;
+    }
+
+    const nextCoords = path.map((p) => [p[0], p[1]]);
+
+    if (!routeEditPolylineRef.current) {
+      const polyline = new window.ymaps.Polyline(
+        nextCoords,
+        {},
+        {
+          strokeColor: '#f59e0b',
+          strokeWidth: 4,
+          strokeOpacity: 0.95,
+          strokeStyle: 'shortdash',
+          interactivityModel: 'default#geoObject',
+          editorMenuManager: () => [],
+        }
+      );
+      map.geoObjects.add(polyline);
+      routeEditPolylineRef.current = polyline;
+
+      const handleRouteGeometryChange = () => {
+        if (isSyncingRouteEditRef.current) return;
+        if (typeof onRoutePathChange !== 'function') return;
+        const coords = polyline.geometry.getCoordinates();
+        if (!Array.isArray(coords)) return;
+        const nextPath = coords
+          .filter((c) => Array.isArray(c) && c.length >= 2)
+          .map((c) => [c[0], c[1]]);
+        onRoutePathChange(nextPath);
+      };
+      routeEditGeometryChangeHandlerRef.current = handleRouteGeometryChange;
+      polyline.geometry.events.add('change', handleRouteGeometryChange);
+    } else {
+      const polyline = routeEditPolylineRef.current;
+      const current = polyline.geometry.getCoordinates();
+      if (JSON.stringify(current) !== JSON.stringify(nextCoords)) {
+        isSyncingRouteEditRef.current = true;
+        try {
+          polyline.geometry.setCoordinates(nextCoords);
+        } finally {
+          isSyncingRouteEditRef.current = false;
+        }
+      }
+    }
+
+    try {
+      routeEditPolylineRef.current.editor.startEditing();
+    } catch {
+      /* ignore */
+    }
+  }, [mapLoaded, routeEditMode, selectedDroneId, routeEditPath, onRoutePathChange]);
 
   useEffect(() => {
     if (!mapLoaded || !mapInstanceRef.current || !window.ymaps) return;
@@ -1098,6 +1172,16 @@ export function YandexMap({
             }
             try { mapInstanceRef.current.geoObjects.remove(draftRectPolygonRef.current); } catch { }
             draftRectPolygonRef.current = null;
+          }
+          if (routeEditGeometryChangeHandlerRef.current && routeEditPolylineRef.current) {
+            try {
+              routeEditPolylineRef.current.geometry.events.remove('change', routeEditGeometryChangeHandlerRef.current);
+            } catch { }
+            routeEditGeometryChangeHandlerRef.current = null;
+          }
+          if (routeEditPolylineRef.current) {
+            try { mapInstanceRef.current.geoObjects.remove(routeEditPolylineRef.current); } catch { }
+            routeEditPolylineRef.current = null;
           }
 
           mapInstanceRef.current.destroy();
