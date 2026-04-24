@@ -708,7 +708,12 @@ function App() {
   };
 
   const handleMapClick = (latlng) => {
-    if (drawRectZoneMode || draftRectBoundary?.length) {
+    if (drawRectZoneMode) {
+      return;
+    }
+    if (editingZoneId != null || draftRectBoundary?.length) {
+      setEditingZoneId(null);
+      setDraftRectBoundary(null);
       return;
     }
     if (templateEditMode) {
@@ -795,10 +800,6 @@ function App() {
         addRoutePoint(selectedDroneForSidebar, latlng);
       }
       return;
-    }
-    if (!drawRectZoneMode && (editingZoneId != null || draftRectBoundary?.length)) {
-      setEditingZoneId(null);
-      setDraftRectBoundary(null);
     }
   };
 
