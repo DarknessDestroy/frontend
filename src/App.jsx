@@ -50,6 +50,7 @@ const FIRST_WAYPOINT_TRANSIT_THRESHOLD_M = 10;
 const ROUTE_LOOP_SNAP_THRESHOLD_M = 15;
 /** Минимальный интервал между одинаковыми предупреждениями о выходе маршрута за зону. */
 const ROUTE_ZONE_REJECT_LOG_COOLDOWN_MS = 1200;
+const TEMPLATE_ROUTE_REJECT_COOLDOWN_MS = 1200;
 const TELEMETRY_SEND_EVERY_MS = 1000;
 const ZONE_COLORS_STORAGE_KEY = 'zone_colors_v1';
 
@@ -299,6 +300,7 @@ function App() {
   const [activeZoneId, setActiveZoneId] = useState(null);
   const activeZoneIdRef = useRef(null);
   const routeZoneRejectLogAtRef = useRef(0);
+  const templateRouteRejectAtRef = useRef(0);
   const [zoneColorsById, setZoneColorsById] = useState(() => {
     try {
       const raw = localStorage.getItem(ZONE_COLORS_STORAGE_KEY);
@@ -328,7 +330,7 @@ function App() {
   }, [activeZoneId]);
 
   useEffect(() => {
-    if (!templateEditMode) return;
+    if (templateEditMode) return;
     setDrawRectZoneMode(false);
     setEditingZoneId(null);
     setDraftRectBoundary(null);
@@ -706,7 +708,32 @@ function App() {
   };
 
   const handleMapClick = (latlng) => {
+    if (drawRectZoneMode || draftRectBoundary?.length) {
+      return;
+    }
     if (templateEditMode) {
+      if (!Array.isArray(activeZoneBoundary) || activeZoneBoundary.length < 4) {
+        return;
+      }
+      if (!isPointInsideZoneBoundary(activeZoneBoundary, latlng)) {
+        return;
+      }
+      const snappedPointIndex = templateDraftPath.findIndex((point) => {
+        if (!Array.isArray(point) || point.length < 2) return false;
+        return calculateDistance(latlng.lat, latlng.lng, point[0], point[1]) <= ROUTE_LOOP_SNAP_THRESHOLD_M;
+      });
+      if (snappedPointIndex >= 0 && templateDraftPath.length >= 2) {
+        const loopPoint = templateDraftPath[snappedPointIndex];
+        const lastPoint = templateDraftPath[templateDraftPath.length - 1];
+        const alreadyClosed =
+          Array.isArray(lastPoint) &&
+          lastPoint[0] === loopPoint[0] &&
+          lastPoint[1] === loopPoint[1];
+        if (!alreadyClosed) {
+          setTemplateDraftPath((prev) => [...prev, [loopPoint[0], loopPoint[1]]]);
+        }
+        return;
+      }
       addTemplateDraftPoint(latlng);
       return;
     }
@@ -774,6 +801,26 @@ function App() {
       setDraftRectBoundary(null);
     }
   };
+
+  const handleTemplateRoutePathChange = useCallback((nextPath) => {
+    if (!Array.isArray(nextPath)) return;
+    const normalizedPath = nextPath
+      .filter((p) => Array.isArray(p) && p.length >= 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]))
+      .map((p) => [p[0], p[1]]);
+    if (
+      Array.isArray(activeZoneBoundary) &&
+      activeZoneBoundary.length >= 4 &&
+      normalizedPath.some(([lat, lng]) => !isPointInsideZoneBoundary(activeZoneBoundary, { lat, lng }))
+    ) {
+      const now = Date.now();
+      if (now - templateRouteRejectAtRef.current > TEMPLATE_ROUTE_REJECT_COOLDOWN_MS) {
+        templateRouteRejectAtRef.current = now;
+      }
+      return;
+    }
+    templateRouteRejectAtRef.current = 0;
+    setTemplateDraftPath(normalizedPath);
+  }, [activeZoneBoundary]);
 
   const handleDronePositionChange = useCallback((droneId, nextPosition) => {
     if (droneId == null || !nextPosition) return;
@@ -2107,10 +2154,13 @@ function App() {
                   mapCenter={mapCenter}
                   mapZoom={mapZoom}
                   onMapClick={handleMapClick}
-                  onZoneClick={handleZoneClickToEdit}
+                  onZoneClick={drawRectZoneMode || draftRectBoundary ? handleZoneClickToEdit : undefined}
                   onDraftRectBoundaryChange={handleDraftRectBoundaryChange}
                   onRectDrawComplete={handleRectDrawComplete}
-                  editingPath={templateDraftPath}
+                  editingPath={null}
+                  routeEditMode={!drawRectZoneMode && !draftRectBoundary}
+                  routeEditPath={templateDraftPath}
+                  onRoutePathChange={handleTemplateRoutePathChange}
                   forceResize={false}
                   zones={zonesForMap}
                   zoneBoundary={activeZoneBoundary}
@@ -2120,12 +2170,98 @@ function App() {
                   drawRectZoneMode={drawRectZoneMode}
                 />
               </div>
+              {(drawRectZoneMode || draftRectBoundary) && (
+                <div className="absolute top-2 left-2 z-[130] w-[min(82vw,340px)] rounded-xl border border-amber-600/40 bg-gray-900/80 p-2 backdrop-blur-sm">
+                  {drawRectZoneMode && !draftRectBoundary && (
+                    <p className="text-xs text-amber-200">
+                      Зажмите кнопку мыши на карте, потяните и отпустите, чтобы нарисовать прямоугольник.
+                    </p>
+                  )}
+                  {draftRectBoundary && (
+                    <div className="flex flex-col gap-2">
+                      <div className="flex flex-col gap-2 items-stretch">
+                        <input
+                          type="text"
+                          value={newRectZoneName}
+                          onChange={(e) => setNewRectZoneName(e.target.value)}
+                          placeholder="Имя зоны"
+                          className="px-3 py-2 bg-gray-800 border border-amber-700/60 rounded-lg text-white text-sm min-h-[42px] w-full"
+                        />
+                        {activeZoneId != null && (
+                          <label className="relative w-full px-3 py-2 min-h-[42px] bg-gray-800 border border-gray-500/70 rounded-lg text-white text-sm flex items-center justify-end">
+                            <span className="pointer-events-none absolute inset-0 flex items-center justify-center whitespace-nowrap">
+                              Цвет зоны
+                            </span>
+                            <input
+                              type="color"
+                              value={activeZoneColor}
+                              onChange={handleActiveZoneColorChange}
+                              className="h-7 w-10 p-0 border-0 rounded cursor-pointer bg-transparent"
+                              title="Выбрать цвет активной зоны"
+                            />
+                          </label>
+                        )}
+                        <button
+                          type="button"
+                          onClick={saveDraftRectZone}
+                          disabled={rectZoneBusy || zoneKmlBusy}
+                          className="w-full px-3 py-2 min-h-[42px] bg-transparent border border-gray-500/70 text-gray-100 hover:bg-emerald-700/80 hover:text-white disabled:opacity-50 rounded-lg text-sm font-medium transition-colors"
+                        >
+                          {editingZoneId != null ? 'Сохранить изменения' : 'Сохранить зону'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={cancelDraftRectZone}
+                          disabled={rectZoneBusy}
+                          className="w-full px-3 py-2 min-h-[42px] bg-transparent border border-gray-500/70 text-gray-200 hover:bg-black/80 hover:text-white disabled:opacity-50 rounded-lg text-sm transition-colors"
+                        >
+                          Отмена редактирования
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="absolute top-2 right-2 z-[100] flex justify-end">
+                <div className="relative flex flex-col items-end gap-2">
+                  {backendZones.length > 0 && (
+                    <select
+                      value={activeZoneId ?? ''}
+                      onChange={handleActiveZoneSelect}
+                      className="px-3 py-2 rounded-lg bg-gray-900/90 border border-gray-600 text-white text-sm"
+                      title="Активная зона"
+                    >
+                      {backendZones.map((z) => (
+                        <option key={z.id} value={z.id}>
+                          {z.name || `Зона ${z.id}`}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <button
+                    type="button"
+                    onClick={toggleDrawRectZoneMode}
+                    title={drawRectZoneMode ? 'Отменить создание зоны' : 'Создать зону'}
+                    aria-label={drawRectZoneMode ? 'Отменить создание зоны' : 'Создать зону'}
+                    className={`w-11 h-11 rounded-lg text-white text-xl leading-none flex items-center justify-center border ${
+                      drawRectZoneMode
+                        ? 'bg-amber-900 border-amber-500 ring-2 ring-amber-400/70'
+                        : 'bg-amber-950/90 border-amber-800 hover:bg-amber-900'
+                    }`}
+                  >
+                    {drawRectZoneMode ? '×' : '▭'}
+                  </button>
+                </div>
+              </div>
               <div className="absolute bottom-4 left-4 right-4 z-10 bg-gray-800/95 border border-gray-600 rounded-xl p-4 shadow-xl max-w-md">
                 <h3 className="font-semibold text-white mb-2">
                   {templateEditMode === 'create' ? 'Создание шаблона маршрута' : 'Редактирование маршрута'}
                 </h3>
                 <p className="text-gray-400 text-sm mb-3">
                   Кликайте по карте, чтобы добавить точки маршрута патрулирования.
+                </p>
+                <p className="text-gray-400 text-xs mb-3">
+                  Режим как в рабочей зоне: можно тянуть узлы и сегменты, маршрут строится внутри активной зоны.
                 </p>
                 <p className="text-white/80 text-sm mb-3">Точек: <strong>{templateDraftPath.length}</strong></p>
                 <div className="flex flex-wrap gap-2 mb-3">

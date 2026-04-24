@@ -410,7 +410,7 @@ export function YandexMap({
     const map = mapInstanceRef.current;
     const path = Array.isArray(routeEditPath) ? routeEditPath : [];
 
-    if (!routeEditMode || !selectedDroneId || path.length === 0) {
+    if (!routeEditMode || path.length === 0) {
       if (routeEditGeometryChangeHandlerRef.current && routeEditPolylineRef.current) {
         try {
           routeEditPolylineRef.current.geometry.events.remove('change', routeEditGeometryChangeHandlerRef.current);
@@ -472,7 +472,7 @@ export function YandexMap({
     } catch {
       /* ignore */
     }
-  }, [mapLoaded, routeEditMode, selectedDroneId, routeEditPath, onRoutePathChange]);
+  }, [mapLoaded, routeEditMode, routeEditPath, onRoutePathChange]);
 
   useEffect(() => {
     if (!mapLoaded || !mapInstanceRef.current || !window.ymaps) return;
